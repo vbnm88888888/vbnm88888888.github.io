@@ -183,16 +183,13 @@ function addUserMessage(content) {
     messageDiv.className = 'message user';
     messageDiv.innerHTML = `
         <div class="avatar user-avatar">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                <circle cx="12" cy="7" r="4"></circle>
-            </svg>
+            <span style="font-size: 1.2rem;">🌟</span>
         </div>
         <div class="message-content">
             <div class="message-bubble">
                 <div class="message-text">${escapeHtml(content)}</div>
             </div>
-            <div class="message-info">你</div>
+            <div class="message-info">你 🌟</div>
         </div>
     `;
     chatMessages.appendChild(messageDiv);
@@ -207,17 +204,13 @@ function addBotMessage(content) {
     messageDiv.className = 'message bot';
     messageDiv.innerHTML = `
         <div class="avatar bot-avatar">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                <path d="M12 17h.01"></path>
-            </svg>
+            <span style="font-size: 1.2rem;">💖</span>
         </div>
         <div class="message-content">
             <div class="message-bubble">
                 <div class="message-text">${escapeHtml(content)}</div>
             </div>
-            <div class="message-info">DeepSeek ${document.getElementById('modelSelect').value}</div>
+            <div class="message-info">🌸 Pink AI</div>
         </div>
     `;
     chatMessages.appendChild(messageDiv);
@@ -378,7 +371,10 @@ async function callDeepSeekAPI(userMessage, apiKey) {
                 const data = line.slice(6);
                 
                 if (data === '[DONE]') {
-                    addBotMessage(fullResponse);
+                    if (fullResponse) {
+                        updateStreamingMessage(fullResponse);
+                        messages.push({ role: 'assistant', content: fullResponse });
+                    }
                     return;
                 }
 
@@ -398,6 +394,12 @@ async function callDeepSeekAPI(userMessage, apiKey) {
     }
 
     if (fullResponse) {
-        addBotMessage(fullResponse);
+        const chatMessages = document.getElementById('chatMessages');
+        const existingMessage = chatMessages.querySelector('.message.bot:last-child');
+        if (!existingMessage || !existingMessage.querySelector('.message-text').textContent) {
+            addBotMessage(fullResponse);
+        } else {
+            messages.push({ role: 'assistant', content: fullResponse });
+        }
     }
 }
