@@ -180,9 +180,14 @@
                         <input type="text" id="newCharacterName" placeholder="如：💕 女仆酱">
                     </div>
                     <div class="form-group">
-                        <label for="newCharacterAvatar">角色头像</label>
-                        <input type="text" id="newCharacterAvatar" placeholder="输入一个 emoji，如：💖">
-                        <div class="input-hint">推荐使用 emoji 作为头像，如：💖🎀😤🌸🌟等</div>
+                        <label>角色头像</label>
+                        <div class="avatar-upload-section">
+                            <div id="avatarPreview" class="avatar-preview">🌿</div>
+                            <button id="avatarUploadBtn" class="avatar-upload-btn">📷 上传图片</button>
+                            <input type="file" id="avatarFileInput" accept="image/*">
+                        </div>
+                        <div class="input-hint">点击上传按钮选择本地图片，或输入 emoji：</div>
+                        <input type="text" id="newCharacterAvatar" placeholder="输入 emoji 替代图片，如：🌿">
                     </div>
                     <div class="form-group">
                         <label for="newCharacterDesc">角色描述</label>

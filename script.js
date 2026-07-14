@@ -9,19 +9,21 @@ const STORAGE_KEY_ACTIVE_CHARACTER = 'deepseek_active_character';
 let characters = [];
 let activeCharacterId = null;
 let isStreaming = false;
+let currentEditingCharacterId = null;
+let currentAvatarDataUrl = null;
 
 const defaultCharacters = [
     {
         id: 'default',
-        name: '🌸 Pink AI',
-        avatar: '💖',
-        description: '一个温柔可爱的AI助手',
-        systemPrompt: '你是一个温柔可爱的AI助手，说话甜美，喜欢用表情符号，像一个贴心的朋友。',
+        name: '🌿 Green AI',
+        avatar: '🌱',
+        description: '一个清新自然的AI助手',
+        systemPrompt: '你是一个清新自然的AI助手，说话温柔亲切，像大自然一样让人感到舒适放松。',
         messages: []
     },
     {
         id: 'maid',
-        name: '💕 女仆酱',
+        name: '🌸 女仆酱',
         avatar: '🎀',
         description: '可爱的女仆角色',
         systemPrompt: '你是一个可爱的女仆，说话温柔可爱，使用日语风格的语气，喜欢用"~"结尾。称呼用户为"主人"。',
@@ -114,7 +116,7 @@ function renderCharacterSelector() {
     characters.forEach(char => {
         const option = document.createElement('option');
         option.value = char.id;
-        option.textContent = `${char.avatar} ${char.name}`;
+        option.textContent = getAvatarDisplay(char.avatar) + ' ' + char.name;
         if (char.id === activeCharacterId) {
             option.selected = true;
         }
@@ -124,11 +126,18 @@ function renderCharacterSelector() {
     updateCharacterDisplay();
 }
 
+function getAvatarDisplay(avatar) {
+    if (avatar.startsWith('data:')) {
+        return '👤';
+    }
+    return avatar;
+}
+
 function updateCharacterDisplay() {
     const char = getActiveCharacter();
     if (!char) return;
 
-    document.querySelector('.current-character-name').textContent = `${char.avatar} ${char.name}`;
+    document.querySelector('.current-character-name').textContent = getAvatarDisplay(char.avatar) + ' ' + char.name;
     document.querySelector('.current-character-desc').textContent = char.description;
 }
 
@@ -158,14 +167,14 @@ function addWelcomeMessage(char) {
     welcomeDiv.className = 'welcome-message';
     welcomeDiv.innerHTML = `
         <div class="avatar bot-avatar">
-            <span style="font-size: 1.5rem;">${char.avatar}</span>
+            ${char.avatar.startsWith('data:') ? `<img src="${char.avatar}" alt="avatar">` : `<span style="font-size: 1.5rem;">${char.avatar}</span>`}
         </div>
         <div class="message-content">
             <div class="message-text">
-                🌸 嗨~ 我是 ${char.name}！<br>
+                🌿 嗨~ 我是 ${char.name}！<br>
                 ✨ ${char.description}，快来和我聊天吧~
             </div>
-            <div class="message-info">${char.avatar} ${char.name}</div>
+            <div class="message-info">${getAvatarDisplay(char.avatar)} ${char.name}</div>
         </div>
     `;
     chatMessages.appendChild(welcomeDiv);
@@ -186,9 +195,14 @@ function initEventListeners() {
     document.getElementById('characterSelect').addEventListener('change', handleCharacterChange);
     document.getElementById('manageCharactersBtn').addEventListener('click', openCharacterManager);
     document.getElementById('closeCharacterManager').addEventListener('click', closeCharacterManager);
-    document.getElementById('addCharacterBtn').addEventListener('click', openAddCharacter);
-    document.getElementById('saveNewCharacter').addEventListener('click', saveNewCharacter);
+    document.getElementById('addCharacterBtn').addEventListener('click', () => openAddCharacter());
+    document.getElementById('saveNewCharacter').addEventListener('click', handleSaveCharacter);
     document.getElementById('cancelNewCharacter').addEventListener('click', closeAddCharacter);
+
+    document.getElementById('avatarUploadBtn').addEventListener('click', () => {
+        document.getElementById('avatarFileInput').click();
+    });
+    document.getElementById('avatarFileInput').addEventListener('change', handleAvatarUpload);
 
     document.getElementById('settingsModal').addEventListener('click', (e) => {
         if (e.target.classList.contains('modal-overlay')) {
@@ -310,7 +324,7 @@ function renderCharacterList() {
         const item = document.createElement('div');
         item.className = 'character-item' + (char.id === activeCharacterId ? ' active' : '');
         item.innerHTML = `
-            <div class="character-avatar">${char.avatar}</div>
+            <div class="character-avatar">${char.avatar.startsWith('data:') ? `<img src="${char.avatar}" alt="avatar">` : char.avatar}</div>
             <div class="character-info">
                 <div class="character-name">${char.name}</div>
                 <div class="character-desc">${char.description}</div>
@@ -332,7 +346,10 @@ function openAddCharacter(editId = null) {
     const avatarInput = document.getElementById('newCharacterAvatar');
     const descInput = document.getElementById('newCharacterDesc');
     const promptInput = document.getElementById('newCharacterPrompt');
-    const saveBtn = document.getElementById('saveNewCharacter');
+    const avatarPreview = document.getElementById('avatarPreview');
+
+    currentEditingCharacterId = editId;
+    currentAvatarDataUrl = null;
 
     if (editId) {
         const char = characters.find(c => c.id === editId);
@@ -343,16 +360,26 @@ function openAddCharacter(editId = null) {
         avatarInput.value = char.avatar;
         descInput.value = char.description;
         promptInput.value = char.systemPrompt;
-        saveBtn.onclick = () => updateCharacter(editId);
+
+        if (char.avatar.startsWith('data:')) {
+            currentAvatarDataUrl = char.avatar;
+            avatarPreview.innerHTML = `<img src="${char.avatar}" alt="avatar">`;
+            avatarPreview.classList.add('has-image');
+        } else {
+            avatarPreview.textContent = char.avatar;
+            avatarPreview.classList.remove('has-image');
+        }
     } else {
         title.textContent = '添加角色';
         idInput.value = '';
         idInput.disabled = false;
         nameInput.value = '';
-        avatarInput.value = '💖';
+        avatarInput.value = '🌿';
         descInput.value = '';
         promptInput.value = '你是一个智能助手，使用自然、友好的语言回答用户问题。';
-        saveBtn.onclick = saveNewCharacter;
+
+        avatarPreview.textContent = '🌿';
+        avatarPreview.classList.remove('has-image');
     }
 
     modal.classList.remove('hidden');
@@ -360,12 +387,50 @@ function openAddCharacter(editId = null) {
 
 function closeAddCharacter() {
     document.getElementById('addCharacterModal').classList.add('hidden');
+    currentEditingCharacterId = null;
+    currentAvatarDataUrl = null;
+}
+
+function handleAvatarUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+        showToast('请选择图片文件');
+        return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+        showToast('图片大小不能超过2MB');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const dataUrl = event.target.result;
+        currentAvatarDataUrl = dataUrl;
+        
+        const avatarPreview = document.getElementById('avatarPreview');
+        avatarPreview.innerHTML = `<img src="${dataUrl}" alt="avatar">`;
+        avatarPreview.classList.add('has-image');
+        
+        document.getElementById('newCharacterAvatar').value = '';
+    };
+    reader.readAsDataURL(file);
+}
+
+function handleSaveCharacter() {
+    if (currentEditingCharacterId) {
+        updateCharacter(currentEditingCharacterId);
+    } else {
+        saveNewCharacter();
+    }
 }
 
 function saveNewCharacter() {
     const id = document.getElementById('newCharacterId').value.trim();
     const name = document.getElementById('newCharacterName').value.trim();
-    const avatar = document.getElementById('newCharacterAvatar').value.trim();
+    const avatarInput = document.getElementById('newCharacterAvatar').value.trim();
     const desc = document.getElementById('newCharacterDesc').value.trim();
     const prompt = document.getElementById('newCharacterPrompt').value.trim();
 
@@ -384,10 +449,12 @@ function saveNewCharacter() {
         return;
     }
 
+    const avatar = currentAvatarDataUrl || avatarInput || '🌿';
+
     characters.push({
         id,
         name,
-        avatar: avatar || '💖',
+        avatar,
         description: desc || '暂无描述',
         systemPrompt: prompt || '你是一个智能助手。',
         messages: []
@@ -402,7 +469,7 @@ function saveNewCharacter() {
 
 function updateCharacter(editId) {
     const name = document.getElementById('newCharacterName').value.trim();
-    const avatar = document.getElementById('newCharacterAvatar').value.trim();
+    const avatarInput = document.getElementById('newCharacterAvatar').value.trim();
     const desc = document.getElementById('newCharacterDesc').value.trim();
     const prompt = document.getElementById('newCharacterPrompt').value.trim();
 
@@ -411,12 +478,14 @@ function updateCharacter(editId) {
         return;
     }
 
+    const avatar = currentAvatarDataUrl || avatarInput || '🌿';
+
     const charIndex = characters.findIndex(c => c.id === editId);
     if (charIndex !== -1) {
         characters[charIndex] = {
             ...characters[charIndex],
             name,
-            avatar: avatar || '💖',
+            avatar,
             description: desc || '暂无描述',
             systemPrompt: prompt || '你是一个智能助手。'
         };
@@ -526,13 +595,13 @@ function addBotMessage(content, save = true) {
     messageDiv.className = 'message bot';
     messageDiv.innerHTML = `
         <div class="avatar bot-avatar">
-            <span style="font-size: 1.2rem;">${char?.avatar || '💖'}</span>
+            ${char?.avatar?.startsWith('data:') ? `<img src="${char.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${char?.avatar || '🌿'}</span>`}
         </div>
         <div class="message-content">
             <div class="message-bubble">
                 <div class="message-text">${escapeHtml(content)}</div>
             </div>
-            <div class="message-info">${char?.avatar || '💖'} ${char?.name || 'AI'}</div>
+            <div class="message-info">${getAvatarDisplay(char?.avatar || '🌿')} ${char?.name || 'AI'}</div>
         </div>
     `;
     chatMessages.appendChild(messageDiv);
@@ -546,7 +615,7 @@ function addErrorMessage(content) {
     messageDiv.className = 'message bot';
     messageDiv.innerHTML = `
         <div class="avatar bot-avatar">
-            <span style="font-size: 1.2rem;">${char?.avatar || '💖'}</span>
+            ${char?.avatar?.startsWith('data:') ? `<img src="${char.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${char?.avatar || '🌿'}</span>`}
         </div>
         <div class="message-content">
             <div class="message-bubble" style="background-color: rgba(239, 68, 68, 0.2); border-left: 3px solid #ef4444;">
@@ -574,13 +643,13 @@ function updateStreamingMessage(content) {
         messageDiv.className = 'message bot';
         messageDiv.innerHTML = `
             <div class="avatar bot-avatar">
-                <span style="font-size: 1.2rem;">${char?.avatar || '💖'}</span>
+                ${char?.avatar?.startsWith('data:') ? `<img src="${char.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${char?.avatar || '🌿'}</span>`}
             </div>
             <div class="message-content">
                 <div class="message-bubble">
                     <div class="message-text">${escapeHtml(content)}</div>
                 </div>
-                <div class="message-info">${char?.avatar || '💖'} ${char?.name || 'AI'}</div>
+                <div class="message-info">${getAvatarDisplay(char?.avatar || '🌿')} ${char?.name || 'AI'}</div>
             </div>
         `;
         chatMessages.appendChild(messageDiv);
