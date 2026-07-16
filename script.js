@@ -344,6 +344,8 @@ function initEventListeners() {
     document.getElementById('saveNewGroup').addEventListener('click', handleSaveGroup);
     document.getElementById('cancelNewGroup').addEventListener('click', closeAddGroup);
 
+    document.getElementById('proactiveChatBtn').addEventListener('click', triggerProactiveChat);
+
     document.getElementById('avatarUploadBtn').addEventListener('click', () => {
         document.getElementById('avatarFileInput').click();
     });
@@ -966,6 +968,67 @@ async function sendGroupMessage(message, apiKey) {
     }
 }
 
+async function triggerProactiveChat() {
+    const apiKey = localStorage.getItem(STORAGE_KEY_API_KEY);
+    if (!apiKey) {
+        showToast('请先在设置中输入 API Key');
+        openSettings();
+        return;
+    }
+
+    if (isStreaming) return;
+    isStreaming = true;
+    document.getElementById('proactiveChatBtn').disabled = true;
+
+    if (activeContextType === 'group') {
+        await triggerProactiveGroupChat(apiKey);
+    } else {
+        await triggerProactiveCharacterChat(apiKey);
+    }
+
+    isStreaming = false;
+    document.getElementById('proactiveChatBtn').disabled = false;
+}
+
+async function triggerProactiveCharacterChat(apiKey) {
+    const char = getActiveCharacter();
+    if (!char) return;
+
+    showTypingIndicator(char);
+
+    try {
+        await callProactiveAPI(apiKey, char);
+    } catch (error) {
+        console.error('API Error:', error);
+        showToast(error.message || 'API 请求失败');
+        addErrorMessage(error.message || 'API 请求失败');
+    } finally {
+        hideTypingIndicator();
+    }
+}
+
+async function triggerProactiveGroupChat(apiKey) {
+    const group = getActiveGroup();
+    if (!group) return;
+
+    for (const memberId of group.members) {
+        const member = characters.find(c => c.id === memberId);
+        if (!member) continue;
+
+        showTypingIndicator(member);
+
+        try {
+            await callProactiveGroupAPI(apiKey, member, group);
+        } catch (error) {
+            console.error('API Error:', error);
+            addGroupErrorMessage(error.message || 'API 请求失败', memberId);
+        }
+
+        hideTypingIndicator();
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+}
+
 function addUserMessage(content, save = true) {
     const chatMessages = document.getElementById('chatMessages');
     const messageDiv = document.createElement('div');
@@ -1313,6 +1376,201 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
         messages: requestMessages,
         stream: true,
         temperature: 0.7,
+        max_tokens: 4096
+    };
+
+    let fetchUrl = `${apiUrl}/chat/completions`;
+    const fetchOptions = {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    };
+
+    if (useProxy && proxyUrl) {
+        fetchUrl = proxyUrl;
+        fetchOptions.headers['X-Deepseek-Key'] = apiKey;
+        fetchOptions.headers['X-Deepseek-Base-Url'] = apiUrl;
+    } else {
+        fetchOptions.headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const response = await fetch(fetchUrl, fetchOptions);
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let fullResponse = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter(line => line.trim());
+
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                
+                if (data === '[DONE]') {
+                    if (fullResponse) {
+                        updateGroupStreamingMessage(fullResponse, character.id);
+                        group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
+                        saveGroups();
+                    }
+                    return;
+                }
+
+                try {
+                    const parsed = JSON.parse(data);
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    
+                    if (content) {
+                        fullResponse += content;
+                        updateGroupStreamingMessage(fullResponse, character.id);
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse chunk:', e);
+                }
+            }
+        }
+    }
+
+    if (fullResponse) {
+        group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
+        saveGroups();
+    }
+}
+
+async function callProactiveAPI(apiKey, character) {
+    const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
+    const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
+    const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
+    const model = document.getElementById('modelSelect').value;
+
+    const requestMessages = [
+        { role: 'system', content: `${character.systemPrompt}\n\n现在，根据你的性格和之前的对话上下文，主动发起一个话题或问候用户。不要等待用户提问，直接以你的角色身份开口说话。保持对话自然流畅，就像朋友之间聊天一样。` },
+        ...character.messages.slice(-10).map(msg => ({
+            role: msg.role,
+            content: msg.content
+        })),
+        { role: 'user', content: '请主动发起对话，根据你的性格和当前情境，主动跟我聊一个话题。' }
+    ];
+
+    const payload = {
+        model: model,
+        messages: requestMessages,
+        stream: true,
+        temperature: 0.8,
+        max_tokens: 4096
+    };
+
+    let fetchUrl = `${apiUrl}/chat/completions`;
+    const fetchOptions = {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    };
+
+    if (useProxy && proxyUrl) {
+        fetchUrl = proxyUrl;
+        fetchOptions.headers['X-Deepseek-Key'] = apiKey;
+        fetchOptions.headers['X-Deepseek-Base-Url'] = apiUrl;
+    } else {
+        fetchOptions.headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const response = await fetch(fetchUrl, fetchOptions);
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let fullResponse = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter(line => line.trim());
+
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                
+                if (data === '[DONE]') {
+                    if (fullResponse) {
+                        const chatMessages = document.getElementById('chatMessages');
+                        const existingMessage = chatMessages.querySelector('.message.bot:last-child');
+                        if (!existingMessage || !existingMessage.querySelector('.message-text').textContent) {
+                            addBotMessage(fullResponse);
+                        } else {
+                            character.messages.push({ role: 'assistant', content: fullResponse });
+                            saveCharacters();
+                        }
+                    }
+                    return;
+                }
+
+                try {
+                    const parsed = JSON.parse(data);
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    
+                    if (content) {
+                        fullResponse += content;
+                        updateStreamingMessage(fullResponse);
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse chunk:', e);
+                }
+            }
+        }
+    }
+
+    if (fullResponse) {
+        character.messages.push({ role: 'assistant', content: fullResponse });
+        saveCharacters();
+    }
+}
+
+async function callProactiveGroupAPI(apiKey, character, group) {
+    const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
+    const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
+    const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
+    const model = document.getElementById('modelSelect').value;
+
+    const groupMessages = group.messages.map(msg => ({
+        role: msg.role,
+        content: msg.role === 'assistant' 
+            ? `[${characters.find(c => c.id === msg.characterId)?.name || 'AI'}]: ${msg.content}`
+            : msg.content
+    }));
+
+    const requestMessages = [
+        { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。${character.systemPrompt}\n\n现在，根据你的性格和之前的群聊上下文，主动发起一个话题或问候群成员。不要等待用户提问，直接以${character.name}的身份开口说话。保持对话自然流畅。` },
+        ...groupMessages,
+        { role: 'user', content: `请${character.name}主动发起对话，根据你的性格和当前情境，主动跟群里的人聊一个话题。` }
+    ];
+
+    const payload = {
+        model: model,
+        messages: requestMessages,
+        stream: true,
+        temperature: 0.8,
         max_tokens: 4096
     };
 
