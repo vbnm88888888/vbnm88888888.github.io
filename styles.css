@@ -325,7 +325,6 @@ body {
 .typing-indicator {
     display: flex;
     gap: 16px;
-    padding-left: 64px;
     animation: fadeIn 0.3s ease;
 }
 

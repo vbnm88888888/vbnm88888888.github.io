@@ -4,13 +4,18 @@ const STORAGE_KEY_MODEL = 'deepseek_model';
 const STORAGE_KEY_USE_PROXY = 'deepseek_use_proxy';
 const STORAGE_KEY_PROXY_URL = 'deepseek_proxy_url';
 const STORAGE_KEY_CHARACTERS = 'deepseek_characters';
-const STORAGE_KEY_ACTIVE_CHARACTER = 'deepseek_active_character';
+const STORAGE_KEY_GROUPS = 'deepseek_groups';
+const STORAGE_KEY_ACTIVE_CONTEXT = 'deepseek_active_context';
+const STORAGE_KEY_CONTEXT_TYPE = 'deepseek_context_type';
 
 let characters = [];
-let activeCharacterId = null;
+let groups = [];
+let activeContextId = null;
+let activeContextType = 'character';
 let isStreaming = false;
 let currentEditingCharacterId = null;
 let currentAvatarDataUrl = null;
+let currentEditingGroupId = null;
 
 const defaultCharacters = [
     {
@@ -41,7 +46,7 @@ const defaultCharacters = [
 
 document.addEventListener('DOMContentLoaded', () => {
     initSettings();
-    initCharacters();
+    initData();
     initEventListeners();
     autoResizeTextarea();
 });
@@ -76,54 +81,129 @@ function initSettings() {
     }
 }
 
-function initCharacters() {
+function initData() {
     const savedCharacters = localStorage.getItem(STORAGE_KEY_CHARACTERS);
-    const savedActiveId = localStorage.getItem(STORAGE_KEY_ACTIVE_CHARACTER);
+    const savedGroups = localStorage.getItem(STORAGE_KEY_GROUPS);
+    const savedContextId = localStorage.getItem(STORAGE_KEY_ACTIVE_CONTEXT);
+    const savedContextType = localStorage.getItem(STORAGE_KEY_CONTEXT_TYPE);
 
     if (savedCharacters) {
-        characters = JSON.parse(savedCharacters);
+        try {
+            characters = JSON.parse(savedCharacters);
+        } catch (e) {
+            console.error('Failed to parse characters:', e);
+            characters = [...defaultCharacters];
+        }
     } else {
         characters = [...defaultCharacters];
         saveCharacters();
     }
 
-    if (savedActiveId && characters.find(c => c.id === savedActiveId)) {
-        activeCharacterId = savedActiveId;
+    if (savedGroups) {
+        try {
+            groups = JSON.parse(savedGroups);
+        } catch (e) {
+            console.error('Failed to parse groups:', e);
+            groups = [];
+        }
     } else {
-        activeCharacterId = characters[0].id;
+        groups = [];
+        saveGroups();
     }
 
-    renderCharacterSelector();
-    loadActiveCharacter();
+    activeContextType = savedContextType || 'character';
+    
+    if (activeContextType === 'group') {
+        if (savedContextId && groups.find(g => g.id === savedContextId)) {
+            activeContextId = savedContextId;
+        } else {
+            activeContextId = groups[0]?.id || null;
+            if (!activeContextId) {
+                activeContextType = 'character';
+                activeContextId = characters[0]?.id || null;
+            }
+        }
+    } else {
+        if (savedContextId && characters.find(c => c.id === savedContextId)) {
+            activeContextId = savedContextId;
+        } else {
+            activeContextId = characters[0]?.id || null;
+        }
+    }
+
+    renderContextSelector();
+    loadActiveContext();
 }
 
 function saveCharacters() {
-    localStorage.setItem(STORAGE_KEY_CHARACTERS, JSON.stringify(characters));
+    try {
+        localStorage.setItem(STORAGE_KEY_CHARACTERS, JSON.stringify(characters));
+    } catch (e) {
+        console.error('Failed to save characters:', e);
+        showToast('存储空间不足，部分数据可能未保存', 'error');
+    }
 }
 
-function saveActiveCharacter() {
-    localStorage.setItem(STORAGE_KEY_ACTIVE_CHARACTER, activeCharacterId);
+function saveGroups() {
+    try {
+        localStorage.setItem(STORAGE_KEY_GROUPS, JSON.stringify(groups));
+    } catch (e) {
+        console.error('Failed to save groups:', e);
+        showToast('存储空间不足，部分数据可能未保存', 'error');
+    }
+}
+
+function saveActiveContext() {
+    localStorage.setItem(STORAGE_KEY_ACTIVE_CONTEXT, activeContextId);
+    localStorage.setItem(STORAGE_KEY_CONTEXT_TYPE, activeContextType);
 }
 
 function getActiveCharacter() {
-    return characters.find(c => c.id === activeCharacterId);
+    return characters.find(c => c.id === activeContextId);
 }
 
-function renderCharacterSelector() {
-    const selector = document.getElementById('characterSelect');
+function getActiveGroup() {
+    return groups.find(g => g.id === activeContextId);
+}
+
+function getActiveContext() {
+    if (activeContextType === 'group') {
+        return getActiveGroup();
+    }
+    return getActiveCharacter();
+}
+
+function renderContextSelector() {
+    const selector = document.getElementById('contextSelect');
     selector.innerHTML = '';
 
-    characters.forEach(char => {
+    const groupOption = document.createElement('optgroup');
+    groupOption.label = '💬 群组';
+    groups.forEach(group => {
         const option = document.createElement('option');
-        option.value = char.id;
-        option.textContent = getAvatarDisplay(char.avatar) + ' ' + char.name;
-        if (char.id === activeCharacterId) {
+        option.value = `group_${group.id}`;
+        option.textContent = `💬 ${group.name}`;
+        if (activeContextType === 'group' && activeContextId === group.id) {
             option.selected = true;
         }
-        selector.appendChild(option);
+        groupOption.appendChild(option);
     });
+    selector.appendChild(groupOption);
 
-    updateCharacterDisplay();
+    const charOption = document.createElement('optgroup');
+    charOption.label = '👤 角色';
+    characters.forEach(char => {
+        const option = document.createElement('option');
+        option.value = `char_${char.id}`;
+        option.textContent = `${getAvatarDisplay(char.avatar)} ${char.name}`;
+        if (activeContextType === 'character' && activeContextId === char.id) {
+            option.selected = true;
+        }
+        charOption.appendChild(option);
+    });
+    selector.appendChild(charOption);
+
+    updateContextDisplay();
 }
 
 function getAvatarDisplay(avatar) {
@@ -133,31 +213,64 @@ function getAvatarDisplay(avatar) {
     return avatar;
 }
 
-function updateCharacterDisplay() {
-    const char = getActiveCharacter();
-    if (!char) return;
+function updateContextDisplay() {
+    const nameEl = document.querySelector('.current-character-name');
+    const descEl = document.querySelector('.current-character-desc');
+    const chatTypeBadge = document.getElementById('chatTypeBadge');
 
-    document.querySelector('.current-character-name').textContent = getAvatarDisplay(char.avatar) + ' ' + char.name;
-    document.querySelector('.current-character-desc').textContent = char.description;
+    if (activeContextType === 'group') {
+        const group = getActiveGroup();
+        if (group) {
+            nameEl.textContent = `💬 ${group.name}`;
+            descEl.textContent = `群成员：${group.members.map(m => characters.find(c => c.id === m)?.name || m).join(', ')}`;
+            chatTypeBadge.textContent = '群聊';
+            chatTypeBadge.style.backgroundColor = '#f59e0b';
+        }
+    } else {
+        const char = getActiveCharacter();
+        if (char) {
+            nameEl.textContent = `${getAvatarDisplay(char.avatar)} ${char.name}`;
+            descEl.textContent = char.description;
+            chatTypeBadge.textContent = '私聊';
+            chatTypeBadge.style.backgroundColor = '#10b981';
+        }
+    }
 }
 
-function loadActiveCharacter() {
-    const char = getActiveCharacter();
-    if (!char) return;
-
+function loadActiveContext() {
     const chatMessages = document.getElementById('chatMessages');
     chatMessages.innerHTML = '';
 
-    if (char.messages.length === 0) {
-        addWelcomeMessage(char);
+    if (activeContextType === 'group') {
+        const group = getActiveGroup();
+        if (!group) return;
+
+        if (group.messages.length === 0) {
+            addGroupWelcomeMessage(group);
+        } else {
+            group.messages.forEach(msg => {
+                if (msg.role === 'user') {
+                    addUserMessage(msg.content, false);
+                } else if (msg.role === 'assistant') {
+                    addGroupBotMessage(msg.content, msg.characterId, false);
+                }
+            });
+        }
     } else {
-        char.messages.forEach(msg => {
-            if (msg.role === 'user') {
-                addUserMessage(msg.content, false);
-            } else if (msg.role === 'assistant') {
-                addBotMessage(msg.content, false);
-            }
-        });
+        const char = getActiveCharacter();
+        if (!char) return;
+
+        if (char.messages.length === 0) {
+            addWelcomeMessage(char);
+        } else {
+            char.messages.forEach(msg => {
+                if (msg.role === 'user') {
+                    addUserMessage(msg.content, false);
+                } else if (msg.role === 'assistant') {
+                    addBotMessage(msg.content, false);
+                }
+            });
+        }
     }
 }
 
@@ -180,6 +293,32 @@ function addWelcomeMessage(char) {
     chatMessages.appendChild(welcomeDiv);
 }
 
+function addGroupWelcomeMessage(group) {
+    const chatMessages = document.getElementById('chatMessages');
+    const welcomeDiv = document.createElement('div');
+    welcomeDiv.className = 'welcome-message';
+    
+    const memberAvatars = group.members.map(m => {
+        const char = characters.find(c => c.id === m);
+        return char?.avatar ? (char.avatar.startsWith('data:') ? '👤' : char.avatar) : '👤';
+    }).join(' ');
+
+    welcomeDiv.innerHTML = `
+        <div class="avatar bot-avatar" style="background: linear-gradient(135deg, #f59e0b, #fbbf24);">
+            <span style="font-size: 1.5rem;">💬</span>
+        </div>
+        <div class="message-content">
+            <div class="message-text">
+                💬 欢迎来到 ${group.name} 群聊！<br>
+                ✨ 群成员：${memberAvatars}<br>
+                💡 发送消息后，所有群成员都会轮流回复哦~
+            </div>
+            <div class="message-info">💬 ${group.name}</div>
+        </div>
+    `;
+    chatMessages.appendChild(welcomeDiv);
+}
+
 function initEventListeners() {
     document.getElementById('settingsBtn').addEventListener('click', openSettings);
     document.getElementById('closeSettings').addEventListener('click', closeSettings);
@@ -192,12 +331,18 @@ function initEventListeners() {
         toggleProxySettings(e.target.checked);
     });
 
-    document.getElementById('characterSelect').addEventListener('change', handleCharacterChange);
+    document.getElementById('contextSelect').addEventListener('change', handleContextChange);
     document.getElementById('manageCharactersBtn').addEventListener('click', openCharacterManager);
     document.getElementById('closeCharacterManager').addEventListener('click', closeCharacterManager);
     document.getElementById('addCharacterBtn').addEventListener('click', () => openAddCharacter());
     document.getElementById('saveNewCharacter').addEventListener('click', handleSaveCharacter);
     document.getElementById('cancelNewCharacter').addEventListener('click', closeAddCharacter);
+
+    document.getElementById('manageGroupsBtn').addEventListener('click', openGroupManager);
+    document.getElementById('closeGroupManager').addEventListener('click', closeGroupManager);
+    document.getElementById('addGroupBtn').addEventListener('click', () => openAddGroup());
+    document.getElementById('saveNewGroup').addEventListener('click', handleSaveGroup);
+    document.getElementById('cancelNewGroup').addEventListener('click', closeAddGroup);
 
     document.getElementById('avatarUploadBtn').addEventListener('click', () => {
         document.getElementById('avatarFileInput').click();
@@ -219,6 +364,18 @@ function initEventListeners() {
     document.getElementById('addCharacterModal').addEventListener('click', (e) => {
         if (e.target.classList.contains('modal-overlay')) {
             closeAddCharacter();
+        }
+    });
+
+    document.getElementById('groupManagerModal').addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay')) {
+            closeGroupManager();
+        }
+    });
+
+    document.getElementById('addGroupModal').addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay')) {
+            closeAddGroup();
         }
     });
 }
@@ -262,10 +419,17 @@ function handleModelChange() {
     localStorage.setItem(STORAGE_KEY_MODEL, model);
 }
 
-function handleCharacterChange(e) {
-    activeCharacterId = e.target.value;
-    saveActiveCharacter();
-    loadActiveCharacter();
+function handleContextChange(e) {
+    const value = e.target.value;
+    if (value.startsWith('group_')) {
+        activeContextType = 'group';
+        activeContextId = value.replace('group_', '');
+    } else {
+        activeContextType = 'character';
+        activeContextId = value.replace('char_', '');
+    }
+    saveActiveContext();
+    loadActiveContext();
 }
 
 function openSettings() {
@@ -321,8 +485,9 @@ function renderCharacterList() {
     list.innerHTML = '';
 
     characters.forEach(char => {
+        const isActive = activeContextType === 'character' && activeContextId === char.id;
         const item = document.createElement('div');
-        item.className = 'character-item' + (char.id === activeCharacterId ? ' active' : '');
+        item.className = 'character-item' + (isActive ? ' active' : '');
         item.innerHTML = `
             <div class="character-avatar">${char.avatar.startsWith('data:') ? `<img src="${char.avatar}" alt="avatar">` : char.avatar}</div>
             <div class="character-info">
@@ -461,7 +626,7 @@ function saveNewCharacter() {
     });
 
     saveCharacters();
-    renderCharacterSelector();
+    renderContextSelector();
     closeAddCharacter();
     closeCharacterManager();
     showToast('角色添加成功！', 'success');
@@ -491,9 +656,9 @@ function updateCharacter(editId) {
         };
 
         saveCharacters();
-        renderCharacterSelector();
-        if (editId === activeCharacterId) {
-            loadActiveCharacter();
+        renderContextSelector();
+        if (editId === activeContextId && activeContextType === 'character') {
+            loadActiveContext();
         }
         closeAddCharacter();
         closeCharacterManager();
@@ -509,20 +674,223 @@ function deleteCharacter(id) {
     if (confirm('确定要删除这个角色吗？删除后对话记录也会丢失哦~')) {
         characters = characters.filter(c => c.id !== id);
         
-        if (activeCharacterId === id) {
-            activeCharacterId = characters[0]?.id || null;
-            saveActiveCharacter();
+        if (activeContextType === 'character' && activeContextId === id) {
+            activeContextId = characters[0]?.id || null;
+            saveActiveContext();
         }
 
+        groups = groups.map(group => ({
+            ...group,
+            members: group.members.filter(m => m !== id)
+        })).filter(group => group.members.length > 0);
+
         saveCharacters();
-        renderCharacterSelector();
+        saveGroups();
+        renderContextSelector();
         renderCharacterList();
         
-        if (activeCharacterId) {
-            loadActiveCharacter();
+        if (activeContextId) {
+            loadActiveContext();
         }
         
         showToast('角色已删除', 'success');
+    }
+}
+
+function openGroupManager() {
+    renderGroupList();
+    document.getElementById('groupManagerModal').classList.remove('hidden');
+}
+
+function closeGroupManager() {
+    document.getElementById('groupManagerModal').classList.add('hidden');
+}
+
+function renderGroupList() {
+    const list = document.getElementById('groupList');
+    list.innerHTML = '';
+
+    groups.forEach(group => {
+        const isActive = activeContextType === 'group' && activeContextId === group.id;
+        const item = document.createElement('div');
+        item.className = 'character-item' + (isActive ? ' active' : '');
+        
+        const memberNames = group.members.map(m => {
+            const char = characters.find(c => c.id === m);
+            return char ? `${char.avatar ? (char.avatar.startsWith('data:') ? '👤' : char.avatar) : '👤'} ${char?.name || m}` : m;
+        }).join(', ');
+
+        item.innerHTML = `
+            <div class="character-avatar" style="background: linear-gradient(135deg, #f59e0b, #fbbf24);">💬</div>
+            <div class="character-info">
+                <div class="character-name">${group.name}</div>
+                <div class="character-desc">成员: ${memberNames}</div>
+            </div>
+            <div class="character-actions">
+                <button class="edit-char-btn" onclick="editGroup('${group.id}')">✏️</button>
+                <button class="delete-char-btn" onclick="deleteGroup('${group.id}')">🗑️</button>
+            </div>
+        `;
+        list.appendChild(item);
+    });
+}
+
+function openAddGroup(editId = null) {
+    const modal = document.getElementById('addGroupModal');
+    const title = document.getElementById('addGroupTitle');
+    const idInput = document.getElementById('newGroupId');
+    const nameInput = document.getElementById('newGroupName');
+    const membersContainer = document.getElementById('groupMembersContainer');
+
+    currentEditingGroupId = editId;
+
+    membersContainer.innerHTML = '';
+
+    if (editId) {
+        const group = groups.find(g => g.id === editId);
+        title.textContent = '编辑群组';
+        idInput.value = group.id;
+        idInput.disabled = true;
+        nameInput.value = group.name;
+
+        characters.forEach(char => {
+            const isSelected = group.members.includes(char.id);
+            membersContainer.innerHTML += `
+                <label class="checkbox-label">
+                    <input type="checkbox" value="${char.id}" ${isSelected ? 'checked' : ''}>
+                    ${char.avatar.startsWith('data:') ? '👤' : char.avatar} ${char.name}
+                </label>
+            `;
+        });
+    } else {
+        title.textContent = '创建群组';
+        idInput.value = '';
+        idInput.disabled = false;
+        nameInput.value = '';
+
+        characters.forEach(char => {
+            membersContainer.innerHTML += `
+                <label class="checkbox-label">
+                    <input type="checkbox" value="${char.id}">
+                    ${char.avatar.startsWith('data:') ? '👤' : char.avatar} ${char.name}
+                </label>
+            `;
+        });
+    }
+
+    modal.classList.remove('hidden');
+}
+
+function closeAddGroup() {
+    document.getElementById('addGroupModal').classList.add('hidden');
+    currentEditingGroupId = null;
+}
+
+function handleSaveGroup() {
+    if (currentEditingGroupId) {
+        updateGroup(currentEditingGroupId);
+    } else {
+        saveNewGroup();
+    }
+}
+
+function saveNewGroup() {
+    const id = document.getElementById('newGroupId').value.trim();
+    const name = document.getElementById('newGroupName').value.trim();
+    const checkboxes = document.querySelectorAll('#groupMembersContainer input[type="checkbox"]');
+    const members = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+
+    if (!id) {
+        showToast('请输入群组ID');
+        return;
+    }
+
+    if (!name) {
+        showToast('请输入群组名称');
+        return;
+    }
+
+    if (members.length < 2) {
+        showToast('群组至少需要2个成员');
+        return;
+    }
+
+    if (groups.find(g => g.id === id)) {
+        showToast('群组ID已存在');
+        return;
+    }
+
+    groups.push({
+        id,
+        name,
+        members,
+        messages: []
+    });
+
+    saveGroups();
+    renderContextSelector();
+    closeAddGroup();
+    closeGroupManager();
+    showToast('群组创建成功！', 'success');
+}
+
+function updateGroup(editId) {
+    const name = document.getElementById('newGroupName').value.trim();
+    const checkboxes = document.querySelectorAll('#groupMembersContainer input[type="checkbox"]');
+    const members = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+
+    if (!name) {
+        showToast('请输入群组名称');
+        return;
+    }
+
+    if (members.length < 2) {
+        showToast('群组至少需要2个成员');
+        return;
+    }
+
+    const groupIndex = groups.findIndex(g => g.id === editId);
+    if (groupIndex !== -1) {
+        groups[groupIndex] = {
+            ...groups[groupIndex],
+            name,
+            members
+        };
+
+        saveGroups();
+        renderContextSelector();
+        if (editId === activeContextId && activeContextType === 'group') {
+            loadActiveContext();
+        }
+        closeAddGroup();
+        closeGroupManager();
+        showToast('群组更新成功！', 'success');
+    }
+}
+
+function editGroup(id) {
+    openAddGroup(id);
+}
+
+function deleteGroup(id) {
+    if (confirm('确定要删除这个群组吗？群组内的聊天记录也会丢失哦~')) {
+        groups = groups.filter(g => g.id !== id);
+        
+        if (activeContextType === 'group' && activeContextId === id) {
+            activeContextType = 'character';
+            activeContextId = characters[0]?.id || null;
+            saveActiveContext();
+        }
+
+        saveGroups();
+        renderContextSelector();
+        renderGroupList();
+        
+        if (activeContextId) {
+            loadActiveContext();
+        }
+        
+        showToast('群组已删除', 'success');
     }
 }
 
@@ -543,12 +911,24 @@ async function sendMessage() {
     input.style.height = 'auto';
     document.getElementById('sendBtn').disabled = true;
 
+    isStreaming = true;
+
+    if (activeContextType === 'group') {
+        await sendGroupMessage(message, apiKey);
+    } else {
+        await sendCharacterMessage(message, apiKey);
+    }
+
+    isStreaming = false;
+    handleInput();
+}
+
+async function sendCharacterMessage(message, apiKey) {
     const char = getActiveCharacter();
     char.messages.push({ role: 'user', content: message });
     saveCharacters();
     addUserMessage(message);
 
-    isStreaming = true;
     showTypingIndicator();
 
     try {
@@ -558,9 +938,31 @@ async function sendMessage() {
         showToast(error.message || 'API 请求失败');
         addErrorMessage(error.message || 'API 请求失败');
     } finally {
-        isStreaming = false;
         hideTypingIndicator();
-        handleInput();
+    }
+}
+
+async function sendGroupMessage(message, apiKey) {
+    const group = getActiveGroup();
+    group.messages.push({ role: 'user', content: message });
+    saveGroups();
+    addUserMessage(message);
+
+    for (const memberId of group.members) {
+        const member = characters.find(c => c.id === memberId);
+        if (!member) continue;
+
+        showTypingIndicator(member);
+
+        try {
+            await callGroupDeepSeekAPI(message, apiKey, member, group);
+        } catch (error) {
+            console.error('API Error:', error);
+            addGroupErrorMessage(error.message || 'API 请求失败', memberId);
+        }
+
+        hideTypingIndicator();
+        await new Promise(resolve => setTimeout(resolve, 500));
     }
 }
 
@@ -608,6 +1010,33 @@ function addBotMessage(content, save = true) {
     scrollToBottom();
 }
 
+function addGroupBotMessage(content, characterId, save = true) {
+    const character = characters.find(c => c.id === characterId);
+    const group = getActiveGroup();
+    
+    if (save && group) {
+        group.messages.push({ role: 'assistant', content, characterId });
+        saveGroups();
+    }
+
+    const chatMessages = document.getElementById('chatMessages');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message bot';
+    messageDiv.innerHTML = `
+        <div class="avatar bot-avatar">
+            ${character?.avatar?.startsWith('data:') ? `<img src="${character.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${character?.avatar || '👤'}</span>`}
+        </div>
+        <div class="message-content">
+            <div class="message-bubble">
+                <div class="message-text">${escapeHtml(content)}</div>
+            </div>
+            <div class="message-info">${getAvatarDisplay(character?.avatar || '👤')} ${character?.name || 'AI'}</div>
+        </div>
+    `;
+    chatMessages.appendChild(messageDiv);
+    scrollToBottom();
+}
+
 function addErrorMessage(content) {
     const char = getActiveCharacter();
     const chatMessages = document.getElementById('chatMessages');
@@ -622,6 +1051,26 @@ function addErrorMessage(content) {
                 <div class="message-text" style="color: #fca5a5;">${escapeHtml(content)}</div>
             </div>
             <div class="message-info">错误</div>
+        </div>
+    `;
+    chatMessages.appendChild(messageDiv);
+    scrollToBottom();
+}
+
+function addGroupErrorMessage(content, characterId) {
+    const character = characters.find(c => c.id === characterId);
+    const chatMessages = document.getElementById('chatMessages');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message bot';
+    messageDiv.innerHTML = `
+        <div class="avatar bot-avatar">
+            ${character?.avatar?.startsWith('data:') ? `<img src="${character.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${character?.avatar || '👤'}</span>`}
+        </div>
+        <div class="message-content">
+            <div class="message-bubble" style="background-color: rgba(239, 68, 68, 0.2); border-left: 3px solid #ef4444;">
+                <div class="message-text" style="color: #fca5a5;">${escapeHtml(content)}</div>
+            </div>
+            <div class="message-info">错误 - ${character?.name || 'AI'}</div>
         </div>
     `;
     chatMessages.appendChild(messageDiv);
@@ -657,8 +1106,57 @@ function updateStreamingMessage(content) {
     scrollToBottom();
 }
 
-function showTypingIndicator() {
-    document.getElementById('typingIndicator').classList.remove('hidden');
+function updateGroupStreamingMessage(content, characterId) {
+    const chatMessages = document.getElementById('chatMessages');
+    const character = characters.find(c => c.id === characterId);
+    
+    const lastMessage = chatMessages.querySelector('.message.bot:last-child');
+    
+    if (lastMessage) {
+        const infoElement = lastMessage.querySelector('.message-info');
+        if (infoElement && infoElement.textContent.includes(character?.name || 'AI')) {
+            const textElement = lastMessage.querySelector('.message-text');
+            if (textElement) {
+                textElement.innerHTML = escapeHtml(content);
+            }
+            scrollToBottom();
+            return;
+        }
+    }
+
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message bot';
+    messageDiv.innerHTML = `
+        <div class="avatar bot-avatar">
+            ${character?.avatar?.startsWith('data:') ? `<img src="${character.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${character?.avatar || '👤'}</span>`}
+        </div>
+        <div class="message-content">
+            <div class="message-bubble">
+                <div class="message-text">${escapeHtml(content)}</div>
+            </div>
+            <div class="message-info">${getAvatarDisplay(character?.avatar || '👤')} ${character?.name || 'AI'}</div>
+        </div>
+    `;
+    chatMessages.appendChild(messageDiv);
+    scrollToBottom();
+}
+
+function showTypingIndicator(character) {
+    const typingIndicator = document.getElementById('typingIndicator');
+    const typingAvatar = typingIndicator.querySelector('.typing-avatar');
+    
+    if (character) {
+        typingAvatar.innerHTML = character.avatar.startsWith('data:') 
+            ? `<img src="${character.avatar}" alt="avatar">` 
+            : `<span style="font-size: 1.2rem;">${character.avatar}</span>`;
+    } else {
+        const char = getActiveCharacter();
+        typingAvatar.innerHTML = char?.avatar?.startsWith('data:') 
+            ? `<img src="${char.avatar}" alt="avatar">` 
+            : `<span style="font-size: 1.2rem;">${char?.avatar || '🌿'}</span>`;
+    }
+    
+    typingIndicator.classList.remove('hidden');
 }
 
 function hideTypingIndicator() {
@@ -788,5 +1286,102 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
             character.messages.push({ role: 'assistant', content: fullResponse });
             saveCharacters();
         }
+    }
+}
+
+async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
+    const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
+    const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
+    const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
+    const model = document.getElementById('modelSelect').value;
+
+    const groupMessages = group.messages.map(msg => ({
+        role: msg.role,
+        content: msg.role === 'assistant' 
+            ? `[${characters.find(c => c.id === msg.characterId)?.name || 'AI'}]: ${msg.content}`
+            : msg.content
+    }));
+
+    const requestMessages = [
+        { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。${character.systemPrompt} 在群聊中，你需要以${character.name}的身份回复用户的消息。` },
+        ...groupMessages,
+        { role: 'user', content: userMessage }
+    ];
+
+    const payload = {
+        model: model,
+        messages: requestMessages,
+        stream: true,
+        temperature: 0.7,
+        max_tokens: 4096
+    };
+
+    let fetchUrl = `${apiUrl}/chat/completions`;
+    const fetchOptions = {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    };
+
+    if (useProxy && proxyUrl) {
+        fetchUrl = proxyUrl;
+        fetchOptions.headers['X-Deepseek-Key'] = apiKey;
+        fetchOptions.headers['X-Deepseek-Base-Url'] = apiUrl;
+    } else {
+        fetchOptions.headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const response = await fetch(fetchUrl, fetchOptions);
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let fullResponse = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter(line => line.trim());
+
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                
+                if (data === '[DONE]') {
+                    if (fullResponse) {
+                        updateGroupStreamingMessage(fullResponse, character.id);
+                        group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
+                        saveGroups();
+                    }
+                    return;
+                }
+
+                try {
+                    const parsed = JSON.parse(data);
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    
+                    if (content) {
+                        fullResponse += content;
+                        updateGroupStreamingMessage(fullResponse, character.id);
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse chunk:', e);
+                }
+            }
+        }
+    }
+
+    if (fullResponse) {
+        group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
+        saveGroups();
     }
 }
