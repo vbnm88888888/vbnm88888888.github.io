@@ -31,6 +31,14 @@
                             <circle cx="12" cy="7" r="4"></circle>
                         </svg>
                     </button>
+                    <button id="proactiveChatBtn" class="settings-btn" title="让角色主动发起对话">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                            <path d="M12 11v6"></path>
+                            <path d="M8 15h8"></path>
+                        </svg>
+                    </button>
                     <button id="settingsBtn" class="settings-btn">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
@@ -48,15 +56,12 @@
                 </select>
             </div>
             <div class="character-info">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span id="chatTypeBadge" style="background-color: #10b981; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">私聊</span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span id="chatTypeBadge" style="background-color: #10b981; color: white; padding: 1px 6px; border-radius: 8px; font-size: 0.6rem; font-weight: 600;">私聊</span>
                     <span class="current-character-name">🌱 🌿 Green AI</span>
                 </div>
                 <span class="current-character-desc">一个清新自然的AI助手</span>
             </div>
-            <button id="proactiveChatBtn" class="proactive-chat-btn" title="让角色主动发起对话">
-                🗣️
-            </button>
         </div>
 
         <main class="chat-container">
