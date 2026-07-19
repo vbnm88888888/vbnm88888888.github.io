@@ -1039,7 +1039,9 @@ ${memberList}
         try {
             const order = JSON.parse(content);
             if (Array.isArray(order) && order.length > 0) {
-                return order.filter(id => group.members.includes(id));
+                const filtered = order.filter(id => group.members.includes(id));
+                const unique = [...new Set(filtered)];
+                return unique.slice(0, 4);
             }
         } catch (e) {
             console.warn('Failed to parse speaking order:', e);
@@ -1168,6 +1170,7 @@ function addGroupBotMessage(content, characterId, save = true) {
     const chatMessages = document.getElementById('chatMessages');
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message bot';
+    messageDiv.setAttribute('data-character-id', characterId);
     messageDiv.innerHTML = `
         <div class="avatar bot-avatar">
             ${character?.avatar?.startsWith('data:') ? `<img src="${character.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${character?.avatar || '👤'}</span>`}
@@ -1258,20 +1261,18 @@ function updateGroupStreamingMessage(content, characterId) {
     
     const lastMessage = chatMessages.querySelector('.message.bot:last-child');
     
-    if (lastMessage) {
-        const infoElement = lastMessage.querySelector('.message-info');
-        if (infoElement && infoElement.textContent.includes(character?.name || 'AI')) {
-            const textElement = lastMessage.querySelector('.message-text');
-            if (textElement) {
-                textElement.innerHTML = escapeHtml(content);
-            }
-            scrollToBottom();
-            return;
+    if (lastMessage && lastMessage.getAttribute('data-character-id') === characterId) {
+        const textElement = lastMessage.querySelector('.message-text');
+        if (textElement) {
+            textElement.innerHTML = escapeHtml(content);
         }
+        scrollToBottom();
+        return;
     }
 
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message bot';
+    messageDiv.setAttribute('data-character-id', characterId);
     messageDiv.innerHTML = `
         <div class="avatar bot-avatar">
             ${character?.avatar?.startsWith('data:') ? `<img src="${character.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${character?.avatar || '👤'}</span>`}
@@ -1535,7 +1536,6 @@ ${positionHint}` },
                 
                 if (data === '[DONE]') {
                     if (fullResponse) {
-                        updateGroupStreamingMessage(fullResponse, character.id);
                         group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
                         saveGroups();
                     }
@@ -1555,11 +1555,6 @@ ${positionHint}` },
                 }
             }
         }
-    }
-
-    if (fullResponse) {
-        group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
-        saveGroups();
     }
 }
 
@@ -1743,7 +1738,6 @@ async function callProactiveGroupAPI(apiKey, character, group) {
                 
                 if (data === '[DONE]') {
                     if (fullResponse) {
-                        updateGroupStreamingMessage(fullResponse, character.id);
                         group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
                         saveGroups();
                     }
@@ -1763,10 +1757,5 @@ async function callProactiveGroupAPI(apiKey, character, group) {
                 }
             }
         }
-    }
-
-    if (fullResponse) {
-        group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
-        saveGroups();
     }
 }
