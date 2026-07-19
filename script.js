@@ -950,107 +950,22 @@ async function sendGroupMessage(message, apiKey) {
     saveGroups();
     addUserMessage(message);
 
-    const speakingOrder = await determineSpeakingOrder(message, group, apiKey);
-    
-    for (let i = 0; i < speakingOrder.length; i++) {
-        const memberId = speakingOrder[i];
+    for (const memberId of group.members) {
         const member = characters.find(c => c.id === memberId);
         if (!member) continue;
 
         showTypingIndicator(member);
 
         try {
-            await callGroupDeepSeekAPI(message, apiKey, member, group, i + 1, speakingOrder);
+            await callGroupDeepSeekAPI(message, apiKey, member, group);
         } catch (error) {
             console.error('API Error:', error);
             addGroupErrorMessage(error.message || 'API 请求失败', memberId);
         }
 
         hideTypingIndicator();
-        await new Promise(resolve => setTimeout(resolve, 800));
+        await new Promise(resolve => setTimeout(resolve, 500));
     }
-}
-
-async function determineSpeakingOrder(userMessage, group, apiKey) {
-    const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
-    const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
-    const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
-    const model = document.getElementById('modelSelect').value;
-
-    const memberInfo = group.members.map(mid => {
-        const char = characters.find(c => c.id === mid);
-        return {
-            id: mid,
-            name: char?.name || '未知',
-            desc: char?.description || ''
-        };
-    });
-
-    const memberList = memberInfo.map(m => `${m.name}: ${m.desc}`).join('\n');
-
-    const requestMessages = [
-        { role: 'system', content: '你是一个群聊主持人，负责决定群成员的发言顺序。请根据用户的消息内容和每个成员的性格特点，判断哪些成员应该发言，以及发言的顺序。' },
-        { role: 'user', content: `用户消息：${userMessage}
-
-群成员列表（ID|名称|描述）：
-${memberList}
-
-请根据用户的消息内容，分析哪个成员最适合首先回应，然后是哪些成员应该跟进。返回一个JSON数组，包含成员ID，按发言顺序排列。例如：["member1", "member2", "member3"]
-
-规则：
-1. 分析用户消息的语境，找出最相关的成员优先发言
-2. 不要让所有成员都发言，只选择2-4个最合适的成员
-3. 返回格式必须是纯JSON数组，不要包含其他文字` }
-    ];
-
-    const payload = {
-        model: model,
-        messages: requestMessages,
-        stream: false,
-        temperature: 0.5,
-        max_tokens: 200
-    };
-
-    let fetchUrl = `${apiUrl}/chat/completions`;
-    const fetchOptions = {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-    };
-
-    if (useProxy && proxyUrl) {
-        fetchUrl = proxyUrl;
-        fetchOptions.headers['X-Deepseek-Key'] = apiKey;
-        fetchOptions.headers['X-Deepseek-Base-Url'] = apiUrl;
-    } else {
-        fetchOptions.headers['Authorization'] = `Bearer ${apiKey}`;
-    }
-
-    try {
-        const response = await fetch(fetchUrl, fetchOptions);
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content;
-        
-        try {
-            const order = JSON.parse(content);
-            if (Array.isArray(order) && order.length > 0) {
-                const filtered = order.filter(id => group.members.includes(id));
-                const unique = [...new Set(filtered)];
-                return unique.slice(0, 4);
-            }
-        } catch (e) {
-            console.warn('Failed to parse speaking order:', e);
-        }
-    } catch (error) {
-        console.warn('Failed to determine speaking order:', error);
-    }
-
-    return group.members.slice(0, 3);
 }
 
 async function triggerProactiveChat() {
@@ -1436,7 +1351,7 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
     }
 }
 
-async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, position = 1, speakingOrder = []) {
+async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
     const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
     const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
@@ -1451,23 +1366,6 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
 
     const memberNames = group.members.map(mid => characters.find(c => c.id === mid)?.name).filter(Boolean).join('、');
     
-    const previousSpeakers = speakingOrder.slice(0, position - 1).map(id => {
-        const char = characters.find(c => c.id === id);
-        return char?.name || '未知';
-    }).join('、');
-
-    const upcomingSpeakers = speakingOrder.slice(position).map(id => {
-        const char = characters.find(c => c.id === id);
-        return char?.name || '未知';
-    }).join('、');
-
-    let positionHint = '';
-    if (position === 1) {
-        positionHint = '你是第一个发言的成员。请直接回应用户的消息，开启话题。';
-    } else {
-        positionHint = `你是第${position}个发言的成员。在你之前，${previousSpeakers}已经发过言了。请仔细阅读他们的发言内容，并在你的回复中回应他们的观点或继续讨论。你的回复需要综合用户的原始消息和前面成员的发言。`;
-    }
-    
     const requestMessages = [
         { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。群成员包括：${memberNames}。${character.systemPrompt}
 
@@ -1478,10 +1376,7 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
 4. 不要只关注用户的消息，也要关注其他成员说了什么。
 5. 如果其他成员提出了问题或话题，你应该回应他们。
 6. 保持对话自然流畅，就像真实的群聊一样。
-7. 回复时不需要前缀，直接说你的内容即可。
-
-当前发言顺序提示：
-${positionHint}` },
+7. 回复时不需要前缀，直接说你的内容即可。` },
         ...groupMessages,
         { role: 'user', content: userMessage }
     ];
