@@ -1073,12 +1073,42 @@ function addBotMessage(content, save = true) {
     scrollToBottom();
 }
 
+function cleanGroupReply(content, characterName) {
+    let cleaned = content.trim();
+    
+    cleaned = cleaned.replace(/^\s*\[.+?\]\s*[:：]\s*/m, '');
+    cleaned = cleaned.replace(/^\s*(?:-\s*)?(?:\d+\.\s*)?\s*/, '');
+    
+    const otherCharacterPrefixes = characters
+        .filter(c => c.name !== characterName)
+        .map(c => c.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    
+    if (otherCharacterPrefixes.length > 0) {
+        const prefixRegex = new RegExp(`(?:^|\\n)\\s*\\[?(?:${otherCharacterPrefixes.join('|')})\\]?\\s*[:：]\\s*`, 'g');
+        cleaned = cleaned.replace(prefixRegex, '\n');
+    }
+    
+    const lines = cleaned.split('\n').filter(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        for (const otherName of otherCharacterPrefixes) {
+            if (trimmed.startsWith(otherName) || trimmed.startsWith(`[${otherName}]`)) {
+                return false;
+            }
+        }
+        return true;
+    });
+    
+    return lines.join('\n').trim();
+}
+
 function addGroupBotMessage(content, characterId, save = true) {
     const character = characters.find(c => c.id === characterId);
+    const cleanedContent = cleanGroupReply(content, character?.name || '');
     const group = getActiveGroup();
     
     if (save && group) {
-        group.messages.push({ role: 'assistant', content, characterId });
+        group.messages.push({ role: 'assistant', content: cleanedContent, characterId });
         saveGroups();
     }
 
@@ -1092,7 +1122,7 @@ function addGroupBotMessage(content, characterId, save = true) {
         </div>
         <div class="message-content">
             <div class="message-bubble">
-                <div class="message-text">${escapeHtml(content)}</div>
+                <div class="message-text">${escapeHtml(cleanedContent)}</div>
             </div>
             <div class="message-info">${getAvatarDisplay(character?.avatar || '👤')} ${character?.name || 'AI'}</div>
         </div>
@@ -1369,14 +1399,13 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
     const requestMessages = [
         { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。群成员包括：${memberNames}。${character.systemPrompt}
 
-群聊规则：
-1. 你必须以${character.name}的身份发言，保持你的人设和性格。
-2. 你的回复需要综合考虑用户的消息和其他群成员的发言。
-3. 你可以引用、同意、反驳或回应其他成员的观点，要有互动感。
-4. 不要只关注用户的消息，也要关注其他成员说了什么。
-5. 如果其他成员提出了问题或话题，你应该回应他们。
-6. 保持对话自然流畅，就像真实的群聊一样。
-7. 回复时不需要前缀，直接说你的内容即可。` },
+严格规则：
+1. 你只能以${character.name}的身份发言，绝对不能替其他角色说话。
+2. 你的回复只能包含你自己的话，不能包含其他角色的对话内容。
+3. 禁止使用[角色名]: 这种格式。
+4. 禁止生成其他角色的回复内容。
+5. 回复时不需要前缀，直接说你的内容即可。
+6. 保持对话自然流畅，就像真实的群聊一样。` },
         ...groupMessages,
         { role: 'user', content: userMessage }
     ];
@@ -1384,7 +1413,7 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
     const payload = {
         model: model,
         messages: requestMessages,
-        stream: true,
+        stream: false,
         temperature: 0.7,
         max_tokens: 4096
     };
@@ -1413,43 +1442,11 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
         throw new Error(errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let fullResponse = '';
-
-    while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n').filter(line => line.trim());
-
-        for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                
-                if (data === '[DONE]') {
-                    if (fullResponse) {
-                        group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
-                        saveGroups();
-                    }
-                    return;
-                }
-
-                try {
-                    const parsed = JSON.parse(data);
-                    const content = parsed.choices?.[0]?.delta?.content;
-                    
-                    if (content) {
-                        fullResponse += content;
-                        updateGroupStreamingMessage(fullResponse, character.id);
-                    }
-                } catch (e) {
-                    console.warn('Failed to parse chunk:', e);
-                }
-            }
-        }
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+    
+    if (content) {
+        addGroupBotMessage(content, character.id);
     }
 }
 
@@ -1569,14 +1566,13 @@ async function callProactiveGroupAPI(apiKey, character, group) {
     const requestMessages = [
         { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。群成员包括：${memberNames}。${character.systemPrompt}
 
-群聊规则：
-1. 你必须以${character.name}的身份发言，保持你的人设和性格。
-2. 你的回复需要综合考虑用户的消息和其他群成员的发言。
-3. 你可以引用、同意、反驳或回应其他成员的观点，要有互动感。
-4. 不要只关注用户的消息，也要关注其他成员说了什么。
-5. 如果其他成员提出了问题或话题，你应该回应他们。
+严格规则：
+1. 你只能以${character.name}的身份发言，绝对不能替其他角色说话。
+2. 你的回复只能包含你自己的话，不能包含其他角色的对话内容。
+3. 禁止使用[角色名]: 这种格式。
+4. 禁止生成其他角色的回复内容。
+5. 回复时不需要前缀，直接说你的内容即可。
 6. 保持对话自然流畅，就像真实的群聊一样。
-7. 回复时不需要前缀，直接说你的内容即可。
 
 现在，根据你的性格和之前的群聊上下文，主动发起一个话题或问候群成员。你可以回应其他成员之前的发言，或者提出一个新的话题让大家讨论。` },
         ...groupMessages,
@@ -1586,7 +1582,7 @@ async function callProactiveGroupAPI(apiKey, character, group) {
     const payload = {
         model: model,
         messages: requestMessages,
-        stream: true,
+        stream: false,
         temperature: 0.8,
         max_tokens: 4096
     };
@@ -1615,42 +1611,10 @@ async function callProactiveGroupAPI(apiKey, character, group) {
         throw new Error(errorData.error?.message || `HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let fullResponse = '';
-
-    while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n').filter(line => line.trim());
-
-        for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                
-                if (data === '[DONE]') {
-                    if (fullResponse) {
-                        group.messages.push({ role: 'assistant', content: fullResponse, characterId: character.id });
-                        saveGroups();
-                    }
-                    return;
-                }
-
-                try {
-                    const parsed = JSON.parse(data);
-                    const content = parsed.choices?.[0]?.delta?.content;
-                    
-                    if (content) {
-                        fullResponse += content;
-                        updateGroupStreamingMessage(fullResponse, character.id);
-                    }
-                } catch (e) {
-                    console.warn('Failed to parse chunk:', e);
-                }
-            }
-        }
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+    
+    if (content) {
+        addGroupBotMessage(content, character.id);
     }
 }
