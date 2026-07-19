@@ -944,20 +944,32 @@ async function sendCharacterMessage(message, apiKey) {
     }
 }
 
+function shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
 async function sendGroupMessage(message, apiKey) {
     const group = getActiveGroup();
     group.messages.push({ role: 'user', content: message });
     saveGroups();
     addUserMessage(message);
 
-    for (const memberId of group.members) {
+    const shuffledMembers = shuffleArray([...group.members]);
+    
+    for (let i = 0; i < shuffledMembers.length; i++) {
+        const memberId = shuffledMembers[i];
         const member = characters.find(c => c.id === memberId);
         if (!member) continue;
 
         showTypingIndicator(member);
 
         try {
-            await callGroupDeepSeekAPI(message, apiKey, member, group);
+            await callGroupDeepSeekAPI(message, apiKey, member, group, i + 1, shuffledMembers);
         } catch (error) {
             console.error('API Error:', error);
             addGroupErrorMessage(error.message || 'API 请求失败', memberId);
@@ -1381,7 +1393,7 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
     }
 }
 
-async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
+async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, position = 1, speakingOrder = []) {
     const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
     const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
@@ -1396,6 +1408,18 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
 
     const memberNames = group.members.map(mid => characters.find(c => c.id === mid)?.name).filter(Boolean).join('、');
     
+    const previousSpeakers = speakingOrder.slice(0, position - 1).map(id => {
+        const char = characters.find(c => c.id === id);
+        return char?.name || '未知';
+    }).join('、');
+    
+    let positionHint = '';
+    if (position === 1) {
+        positionHint = '你是第一个发言的成员。请直接回应用户的消息。';
+    } else {
+        positionHint = `你是第${position}个发言的成员。在你之前，${previousSpeakers}已经发过言了。请仔细阅读他们的发言内容，并在你的回复中回应他们的观点或继续讨论。`;
+    }
+    
     const requestMessages = [
         { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。群成员包括：${memberNames}。${character.systemPrompt}
 
@@ -1405,7 +1429,10 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
 3. 禁止使用[角色名]: 这种格式。
 4. 禁止生成其他角色的回复内容。
 5. 回复时不需要前缀，直接说你的内容即可。
-6. 保持对话自然流畅，就像真实的群聊一样。` },
+6. 保持对话自然流畅，就像真实的群聊一样。
+
+当前发言提示：
+${positionHint}` },
         ...groupMessages,
         { role: 'user', content: userMessage }
     ];
