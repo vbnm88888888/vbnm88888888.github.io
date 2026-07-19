@@ -1365,8 +1365,19 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group) {
             : msg.content
     }));
 
+    const memberNames = group.members.map(mid => characters.find(c => c.id === mid)?.name).filter(Boolean).join('、');
+    
     const requestMessages = [
-        { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。${character.systemPrompt} 在群聊中，你需要以${character.name}的身份回复用户的消息。` },
+        { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。群成员包括：${memberNames}。${character.systemPrompt}
+
+群聊规则：
+1. 你必须以${character.name}的身份发言，保持你的人设和性格。
+2. 你的回复需要综合考虑用户的消息和其他群成员的发言。
+3. 你可以引用、同意、反驳或回应其他成员的观点，要有互动感。
+4. 不要只关注用户的消息，也要关注其他成员说了什么。
+5. 如果其他成员提出了问题或话题，你应该回应他们。
+6. 保持对话自然流畅，就像真实的群聊一样。
+7. 回复时不需要前缀，直接说你的内容即可。` },
         ...groupMessages,
         { role: 'user', content: userMessage }
     ];
@@ -1560,10 +1571,23 @@ async function callProactiveGroupAPI(apiKey, character, group) {
             : msg.content
     }));
 
+    const memberNames = group.members.map(mid => characters.find(c => c.id === mid)?.name).filter(Boolean).join('、');
+    
     const requestMessages = [
-        { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。${character.systemPrompt}\n\n现在，根据你的性格和之前的群聊上下文，主动发起一个话题或问候群成员。不要等待用户提问，直接以${character.name}的身份开口说话。保持对话自然流畅。` },
+        { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。群成员包括：${memberNames}。${character.systemPrompt}
+
+群聊规则：
+1. 你必须以${character.name}的身份发言，保持你的人设和性格。
+2. 你的回复需要综合考虑用户的消息和其他群成员的发言。
+3. 你可以引用、同意、反驳或回应其他成员的观点，要有互动感。
+4. 不要只关注用户的消息，也要关注其他成员说了什么。
+5. 如果其他成员提出了问题或话题，你应该回应他们。
+6. 保持对话自然流畅，就像真实的群聊一样。
+7. 回复时不需要前缀，直接说你的内容即可。
+
+现在，根据你的性格和之前的群聊上下文，主动发起一个话题或问候群成员。你可以回应其他成员之前的发言，或者提出一个新的话题让大家讨论。` },
         ...groupMessages,
-        { role: 'user', content: `请${character.name}主动发起对话，根据你的性格和当前情境，主动跟群里的人聊一个话题。` }
+        { role: 'user', content: `请${character.name}主动发起对话，可以回应其他成员的发言，或者提出一个新话题让大家讨论。` }
     ];
 
     const payload = {
