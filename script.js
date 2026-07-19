@@ -1399,12 +1399,22 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
 
-    const groupMessages = group.messages.map(msg => ({
-        role: msg.role,
-        content: msg.role === 'assistant' 
-            ? `[${characters.find(c => c.id === msg.characterId)?.name || 'AI'}]: ${msg.content}`
-            : msg.content
-    }));
+    const recentMessages = group.messages.slice(-20);
+    
+    const groupMessages = recentMessages.map(msg => {
+        if (msg.role === 'assistant') {
+            const speakerName = characters.find(c => c.id === msg.characterId)?.name || 'AI';
+            return {
+                role: 'assistant',
+                name: speakerName,
+                content: msg.content
+            };
+        }
+        return {
+            role: 'user',
+            content: msg.content
+        };
+    });
 
     const memberNames = group.members.map(mid => characters.find(c => c.id === mid)?.name).filter(Boolean).join('、');
     
@@ -1421,15 +1431,17 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
     }
     
     const requestMessages = [
-        { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。群成员包括：${memberNames}。${character.systemPrompt}
+        { role: 'system', content: `你是${character.name}，${character.systemPrompt}
 
-严格规则：
-1. 你只能以${character.name}的身份发言，绝对不能替其他角色说话。
-2. 你的回复只能包含你自己的话，不能包含其他角色的对话内容。
-3. 禁止使用[角色名]: 这种格式。
-4. 禁止生成其他角色的回复内容。
-5. 回复时不需要前缀，直接说你的内容即可。
-6. 保持对话自然流畅，就像真实的群聊一样。
+你正在参与一个群聊。群成员包括：${memberNames}。
+
+你的任务：
+1. 以${character.name}的身份发言，保持你的人设和性格。
+2. 仔细阅读用户的消息和其他群成员的发言。
+3. 用自然的语言回复，就像真实聊天一样。
+4. 只回复你自己的观点，不要替其他角色说话。
+5. 不要使用任何角色名称前缀，直接说你的内容。
+6. 不要生成其他角色的对话。
 
 当前发言提示：
 ${positionHint}` },
@@ -1581,25 +1593,37 @@ async function callProactiveGroupAPI(apiKey, character, group) {
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
 
-    const groupMessages = group.messages.map(msg => ({
-        role: msg.role,
-        content: msg.role === 'assistant' 
-            ? `[${characters.find(c => c.id === msg.characterId)?.name || 'AI'}]: ${msg.content}`
-            : msg.content
-    }));
+    const recentMessages = group.messages.slice(-20);
+    
+    const groupMessages = recentMessages.map(msg => {
+        if (msg.role === 'assistant') {
+            const speakerName = characters.find(c => c.id === msg.characterId)?.name || 'AI';
+            return {
+                role: 'assistant',
+                name: speakerName,
+                content: msg.content
+            };
+        }
+        return {
+            role: 'user',
+            content: msg.content
+        };
+    });
 
     const memberNames = group.members.map(mid => characters.find(c => c.id === mid)?.name).filter(Boolean).join('、');
     
     const requestMessages = [
-        { role: 'system', content: `你正在参与一个名为"${group.name}"的群聊。群成员包括：${memberNames}。${character.systemPrompt}
+        { role: 'system', content: `你是${character.name}，${character.systemPrompt}
 
-严格规则：
-1. 你只能以${character.name}的身份发言，绝对不能替其他角色说话。
-2. 你的回复只能包含你自己的话，不能包含其他角色的对话内容。
-3. 禁止使用[角色名]: 这种格式。
-4. 禁止生成其他角色的回复内容。
-5. 回复时不需要前缀，直接说你的内容即可。
-6. 保持对话自然流畅，就像真实的群聊一样。
+你正在参与一个群聊。群成员包括：${memberNames}。
+
+你的任务：
+1. 以${character.name}的身份发言，保持你的人设和性格。
+2. 仔细阅读用户的消息和其他群成员的发言。
+3. 用自然的语言回复，就像真实聊天一样。
+4. 只回复你自己的观点，不要替其他角色说话。
+5. 不要使用任何角色名称前缀，直接说你的内容。
+6. 不要生成其他角色的对话。
 
 现在，根据你的性格和之前的群聊上下文，主动发起一个话题或问候群成员。你可以回应其他成员之前的发言，或者提出一个新的话题让大家讨论。` },
         ...groupMessages,
