@@ -1089,29 +1089,57 @@ function cleanGroupReply(content, characterName) {
     let cleaned = content.trim();
     
     cleaned = cleaned.replace(/^\s*\[.+?\]\s*[:：]\s*/m, '');
-    cleaned = cleaned.replace(/^\s*(?:-\s*)?(?:\d+\.\s*)?\s*/, '');
+    cleaned = cleaned.replace(/^\s*(?:-\s*)?(?:\d+\.\s*)?(?:\*\s*)?(?:•\s*)?\s*/, '');
     
-    const otherCharacterPrefixes = characters
-        .filter(c => c.name !== characterName)
-        .map(c => c.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const otherCharacters = characters.filter(c => c.name !== characterName);
     
-    if (otherCharacterPrefixes.length > 0) {
-        const prefixRegex = new RegExp(`(?:^|\\n)\\s*\\[?(?:${otherCharacterPrefixes.join('|')})\\]?\\s*[:：]\\s*`, 'g');
-        cleaned = cleaned.replace(prefixRegex, '\n');
+    for (const otherChar of otherCharacters) {
+        const escapedName = otherChar.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        const patterns = [
+            new RegExp(`(?:^|\\n)\\s*\\[?${escapedName}\\]?\\s*[:：]\\s*`, 'g'),
+            new RegExp(`(?:^|\\n)\\s*${escapedName}\\s*说[:：]\\s*`, 'g'),
+            new RegExp(`(?:^|\\n)\\s*${escapedName}\\s*[:：]\\s*`, 'g'),
+            new RegExp(`(?:^|\\n)\\s*${escapedName}\\s+`, 'g')
+        ];
+        
+        for (const pattern of patterns) {
+            cleaned = cleaned.replace(pattern, '\n');
+        }
     }
     
     const lines = cleaned.split('\n').filter(line => {
         const trimmed = line.trim();
         if (!trimmed) return false;
-        for (const otherName of otherCharacterPrefixes) {
-            if (trimmed.startsWith(otherName) || trimmed.startsWith(`[${otherName}]`)) {
+        
+        for (const otherChar of otherCharacters) {
+            if (trimmed.startsWith(otherChar.name) || 
+                trimmed.startsWith(`[${otherChar.name}]`) ||
+                trimmed.startsWith(otherChar.name + '：') ||
+                trimmed.startsWith(otherChar.name + ':') ||
+                trimmed.startsWith(otherChar.name + '说')) {
                 return false;
             }
         }
         return true;
     });
     
-    return lines.join('\n').trim();
+    cleaned = lines.join('\n').trim();
+    
+    if (!cleaned && content.trim()) {
+        cleaned = content.split('\n')[0].trim();
+        for (const otherChar of otherCharacters) {
+            const patterns = [
+                new RegExp(`^\\s*${otherChar.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[:：]\\s*`),
+                new RegExp(`^\\s*\\[${otherChar.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\s*[:：]\\s*`)
+            ];
+            for (const pattern of patterns) {
+                cleaned = cleaned.replace(pattern, '');
+            }
+        }
+    }
+    
+    return cleaned;
 }
 
 function addGroupBotMessage(content, characterId, save = true) {
@@ -1399,22 +1427,23 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
 
-    const recentMessages = group.messages.slice(-20);
+    const recentMessages = group.messages.slice(-10);
     
-    const groupMessages = recentMessages.map(msg => {
+    const groupMessages = [];
+    for (const msg of recentMessages) {
         if (msg.role === 'assistant') {
             const speakerName = characters.find(c => c.id === msg.characterId)?.name || 'AI';
-            return {
-                role: 'assistant',
-                name: speakerName,
+            groupMessages.push({
+                role: 'system',
+                content: `${speakerName}说：${msg.content}`
+            });
+        } else {
+            groupMessages.push({
+                role: 'user',
                 content: msg.content
-            };
+            });
         }
-        return {
-            role: 'user',
-            content: msg.content
-        };
-    });
+    }
 
     const memberNames = group.members.map(mid => characters.find(c => c.id === mid)?.name).filter(Boolean).join('、');
     
@@ -1433,15 +1462,12 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
     const requestMessages = [
         { role: 'system', content: `你是${character.name}，${character.systemPrompt}
 
-你正在参与一个群聊。群成员包括：${memberNames}。
-
-你的任务：
-1. 以${character.name}的身份发言，保持你的人设和性格。
-2. 仔细阅读用户的消息和其他群成员的发言。
-3. 用自然的语言回复，就像真实聊天一样。
-4. 只回复你自己的观点，不要替其他角色说话。
-5. 不要使用任何角色名称前缀，直接说你的内容。
-6. 不要生成其他角色的对话。
+群聊规则（必须严格遵守）：
+1. 你只能回复你自己的话，绝对不能替其他角色发言。
+2. 你只能输出一段文字，就是你自己想说的话。
+3. 不要包含任何其他角色的名字或对话内容。
+4. 不要使用格式如"角色名："或"角色名说："。
+5. 直接说你的内容，不需要前缀。
 
 当前发言提示：
 ${positionHint}` },
@@ -1593,37 +1619,35 @@ async function callProactiveGroupAPI(apiKey, character, group) {
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
 
-    const recentMessages = group.messages.slice(-20);
+    const recentMessages = group.messages.slice(-10);
     
-    const groupMessages = recentMessages.map(msg => {
+    const groupMessages = [];
+    for (const msg of recentMessages) {
         if (msg.role === 'assistant') {
             const speakerName = characters.find(c => c.id === msg.characterId)?.name || 'AI';
-            return {
-                role: 'assistant',
-                name: speakerName,
+            groupMessages.push({
+                role: 'system',
+                content: `${speakerName}说：${msg.content}`
+            });
+        } else {
+            groupMessages.push({
+                role: 'user',
                 content: msg.content
-            };
+            });
         }
-        return {
-            role: 'user',
-            content: msg.content
-        };
-    });
+    }
 
     const memberNames = group.members.map(mid => characters.find(c => c.id === mid)?.name).filter(Boolean).join('、');
     
     const requestMessages = [
         { role: 'system', content: `你是${character.name}，${character.systemPrompt}
 
-你正在参与一个群聊。群成员包括：${memberNames}。
-
-你的任务：
-1. 以${character.name}的身份发言，保持你的人设和性格。
-2. 仔细阅读用户的消息和其他群成员的发言。
-3. 用自然的语言回复，就像真实聊天一样。
-4. 只回复你自己的观点，不要替其他角色说话。
-5. 不要使用任何角色名称前缀，直接说你的内容。
-6. 不要生成其他角色的对话。
+群聊规则（必须严格遵守）：
+1. 你只能回复你自己的话，绝对不能替其他角色发言。
+2. 你只能输出一段文字，就是你自己想说的话。
+3. 不要包含任何其他角色的名字或对话内容。
+4. 不要使用格式如"角色名："或"角色名说："。
+5. 直接说你的内容，不需要前缀。
 
 现在，根据你的性格和之前的群聊上下文，主动发起一个话题或问候群成员。你可以回应其他成员之前的发言，或者提出一个新的话题让大家讨论。` },
         ...groupMessages,
