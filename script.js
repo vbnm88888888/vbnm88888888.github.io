@@ -1434,8 +1434,8 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
         if (msg.role === 'assistant') {
             const speakerName = characters.find(c => c.id === msg.characterId)?.name || 'AI';
             groupMessages.push({
-                role: 'system',
-                content: `${speakerName}说：${msg.content}`
+                role: 'user',
+                content: `[${speakerName}的发言] ${msg.content}`
             });
         } else {
             groupMessages.push({
@@ -1468,6 +1468,7 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
 3. 不要包含任何其他角色的名字或对话内容。
 4. 不要使用格式如"角色名："或"角色名说："。
 5. 直接说你的内容，不需要前缀。
+6. 不要重复你之前说过的话。
 
 当前发言提示：
 ${positionHint}` },
@@ -1475,11 +1476,14 @@ ${positionHint}` },
         { role: 'user', content: userMessage }
     ];
 
+    const randomSeed = Date.now() + Math.floor(Math.random() * 1000000);
+
     const payload = {
         model: model,
         messages: requestMessages,
         stream: false,
-        temperature: 0.7,
+        temperature: 0.9,
+        seed: randomSeed,
         max_tokens: 4096
     };
 
@@ -1626,8 +1630,8 @@ async function callProactiveGroupAPI(apiKey, character, group) {
         if (msg.role === 'assistant') {
             const speakerName = characters.find(c => c.id === msg.characterId)?.name || 'AI';
             groupMessages.push({
-                role: 'system',
-                content: `${speakerName}说：${msg.content}`
+                role: 'user',
+                content: `[${speakerName}的发言] ${msg.content}`
             });
         } else {
             groupMessages.push({
@@ -1648,17 +1652,21 @@ async function callProactiveGroupAPI(apiKey, character, group) {
 3. 不要包含任何其他角色的名字或对话内容。
 4. 不要使用格式如"角色名："或"角色名说："。
 5. 直接说你的内容，不需要前缀。
+6. 不要重复你之前说过的话。
 
 现在，根据你的性格和之前的群聊上下文，主动发起一个话题或问候群成员。你可以回应其他成员之前的发言，或者提出一个新的话题让大家讨论。` },
         ...groupMessages,
         { role: 'user', content: `请${character.name}主动发起对话，可以回应其他成员的发言，或者提出一个新话题让大家讨论。` }
     ];
 
+    const randomSeed = Date.now() + Math.floor(Math.random() * 1000000);
+
     const payload = {
         model: model,
         messages: requestMessages,
         stream: false,
-        temperature: 0.8,
+        temperature: 0.9,
+        seed: randomSeed,
         max_tokens: 4096
     };
 
