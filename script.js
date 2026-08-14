@@ -214,27 +214,6 @@ function getAvatarDisplay(avatar) {
 }
 
 function updateContextDisplay() {
-    const nameEl = document.querySelector('.current-character-name');
-    const descEl = document.querySelector('.current-character-desc');
-    const chatTypeBadge = document.getElementById('chatTypeBadge');
-
-    if (activeContextType === 'group') {
-        const group = getActiveGroup();
-        if (group) {
-            nameEl.textContent = `💬 ${group.name}`;
-            descEl.textContent = `群成员：${group.members.map(m => characters.find(c => c.id === m)?.name || m).join(', ')}`;
-            chatTypeBadge.textContent = '群聊';
-            chatTypeBadge.style.backgroundColor = '#f59e0b';
-        }
-    } else {
-        const char = getActiveCharacter();
-        if (char) {
-            nameEl.textContent = `${getAvatarDisplay(char.avatar)} ${char.name}`;
-            descEl.textContent = char.description;
-            chatTypeBadge.textContent = '私聊';
-            chatTypeBadge.style.backgroundColor = '#10b981';
-        }
-    }
 }
 
 function loadActiveContext() {
