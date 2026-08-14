@@ -1076,7 +1076,7 @@ function addBotMessage(content, save = true) {
         </div>
         <div class="message-content">
             <div class="message-bubble">
-                <div class="message-text">${escapeHtml(content)}</div>
+                <div class="message-text markdown-body">${renderMarkdown(content)}</div>
             </div>
             <div class="message-info">${getAvatarDisplay(char?.avatar || '🌿')} ${char?.name || 'AI'}</div>
         </div>
@@ -1162,7 +1162,7 @@ function addGroupBotMessage(content, characterId, save = true) {
         </div>
         <div class="message-content">
             <div class="message-bubble">
-                <div class="message-text">${escapeHtml(cleanedContent)}</div>
+                <div class="message-text markdown-body">${renderMarkdown(cleanedContent)}</div>
             </div>
             <div class="message-info">${getAvatarDisplay(character?.avatar || '👤')} ${character?.name || 'AI'}</div>
         </div>
@@ -1219,7 +1219,7 @@ function updateStreamingMessage(content) {
     if (lastMessage) {
         const textElement = lastMessage.querySelector('.message-text');
         if (textElement) {
-            textElement.innerHTML = escapeHtml(content);
+            textElement.innerHTML = renderMarkdown(content);
         }
     } else {
         const messageDiv = document.createElement('div');
@@ -1230,7 +1230,7 @@ function updateStreamingMessage(content) {
             </div>
             <div class="message-content">
                 <div class="message-bubble">
-                    <div class="message-text">${escapeHtml(content)}</div>
+                    <div class="message-text markdown-body">${renderMarkdown(content)}</div>
                 </div>
                 <div class="message-info">${getAvatarDisplay(char?.avatar || '🌿')} ${char?.name || 'AI'}</div>
             </div>
@@ -1249,7 +1249,7 @@ function updateGroupStreamingMessage(content, characterId) {
     if (lastMessage && lastMessage.getAttribute('data-character-id') === characterId) {
         const textElement = lastMessage.querySelector('.message-text');
         if (textElement) {
-            textElement.innerHTML = escapeHtml(content);
+            textElement.innerHTML = renderMarkdown(content);
         }
         scrollToBottom();
         return;
@@ -1264,7 +1264,7 @@ function updateGroupStreamingMessage(content, characterId) {
         </div>
         <div class="message-content">
             <div class="message-bubble">
-                <div class="message-text">${escapeHtml(content)}</div>
+                <div class="message-text markdown-body">${renderMarkdown(content)}</div>
             </div>
             <div class="message-info">${getAvatarDisplay(character?.avatar || '👤')} ${character?.name || 'AI'}</div>
         </div>
@@ -1323,6 +1323,23 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function renderMarkdown(text) {
+    try {
+        if (typeof marked !== 'undefined') {
+            marked.setOptions({
+                breaks: true,
+                gfm: true
+            });
+            return marked.parse(text);
+        }
+    } catch (e) {
+        console.warn('Markdown 解析失败:', e);
+    }
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML.replace(/\n/g, '<br>');
 }
 
 async function callDeepSeekAPI(userMessage, apiKey, character) {
