@@ -1513,7 +1513,7 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
         messages: requestMessages,
         stream: true,
         temperature: 0.7,
-        max_tokens: 1536
+        max_tokens: 4096
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1542,63 +1542,85 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
 
     const reader = response.body.getReader();
     // {stream: true} 让 decoder 保留跨 chunk 的 UTF-8 部分序列，防止多字节字符被截断导致 JSON.parse 失败
-    const decoder = new TextDecoder('utf-8', { stream: true });
+    const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let fullResponse = '';
-    let finished = false;
+    let receivedDone = false;
 
     try {
-        while (true) {
+        while (!receivedDone) {
             const { done, value } = await reader.read();
 
-            if (done) break;
+            if (done) {
+                // reader 结束：把 decoder 内部残留的半字节 flush 出来
+                buffer += decoder.decode();
+                break;
+            }
 
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            // 保留最后一行（可能是不完整的 data line）
-            buffer = lines.pop() || '';
 
-            for (const line of lines) {
+            // 用 \n 切割，最后一行可能不完整，保留到下一个 chunk
+            let newlineIdx;
+            // 一次处理所有完整的行
+            while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+                const line = buffer.slice(0, newlineIdx);
+                buffer = buffer.slice(newlineIdx + 1);
+
                 const trimmed = line.trim();
                 if (!trimmed) continue;
                 if (!trimmed.startsWith('data:')) continue;
 
+                // data: 后面可能有空格
                 const data = trimmed.slice(5).trim();
 
                 if (data === '[DONE]') {
-                    finished = true;
+                    // 收到结束信号：处理完当前 chunk 后退出外层循环
+                    receivedDone = true;
                     break;
                 }
 
                 try {
                     const parsed = JSON.parse(data);
-                    const content = parsed.choices?.[0]?.delta?.content;
+                    const choice = parsed.choices?.[0];
+                    const content = choice?.delta?.content;
                     if (content) {
                         fullResponse += content;
                         updateStreamingMessage(fullResponse);
                     }
-                    const finishReason = parsed.choices?.[0]?.finish_reason;
-                    if (finishReason && finishReason !== 'null') {
-                        finished = true;
-                    }
+                    // 不再因 finish_reason 提前 break：finish_reason 出现后还可能有 [DONE] 或 buffered content
                 } catch (e) {
-                    // SSE 中的 ping / 心跳行是无法 parse 的正常情况，只 debug
-                    if (data.trim() && !data.includes('ping')) {
-                        console.debug('Chunk parse skip:', data.slice(0, 60));
+                    // SSE 中可能有 :ping 心跳或空 data 行，正常跳过
+                    if (data && !data.includes('ping')) {
+                        console.debug('Chunk parse skip:', data.slice(0, 80));
                     }
                 }
             }
-            if (finished) break;
         }
+    } catch (streamErr) {
+        console.error('Stream read error:', streamErr);
+        // 读取异常时不抛出，尽量保留已收到的部分回复
     } finally {
-        // flush remaining
-        buffer += decoder.decode();
-        decoder.decode = () => '';
+        // 尝试 flush decoder 残留
+        try {
+            const rest = decoder.decode();
+            if (rest) buffer += rest;
+        } catch (e) {}
 
-        if (fullResponse && !finished) {
-            // 未收到 [DONE] 就中断：也渲染为完整消息
-            console.debug('Stream closed without [DONE], finalizing partial reply');
+        // 处理 buffer 中可能残留的最后一行（无 \n 结尾）
+        const bufTrim = buffer.trim();
+        if (bufTrim.startsWith('data:')) {
+            const data = bufTrim.slice(5).trim();
+            if (data && data !== '[DONE]') {
+                try {
+                    const parsed = JSON.parse(data);
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    if (content) {
+                        fullResponse += content;
+                    }
+                } catch (e) {}
+            }
         }
+
         if (fullResponse) {
             finalizeStreamingMessage(fullResponse);
             const lastMsg = character.messages[character.messages.length - 1];
@@ -1673,7 +1695,7 @@ ${positionHint}` },
         stream: false,
         temperature: 0.9,
         seed: randomSeed,
-        max_tokens: 1536
+        max_tokens: 4096
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1729,7 +1751,7 @@ async function callProactiveAPI(apiKey, character) {
         messages: requestMessages,
         stream: true,
         temperature: 0.8,
-        max_tokens: 1536
+        max_tokens: 4096
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1757,54 +1779,73 @@ async function callProactiveAPI(apiKey, character) {
     }
 
     const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8', { stream: true });
+    const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let fullResponse = '';
-    let finished = false;
+    let receivedDone = false;
 
     try {
-        while (true) {
+        while (!receivedDone) {
             const { done, value } = await reader.read();
 
-            if (done) break;
+            if (done) {
+                buffer += decoder.decode();
+                break;
+            }
 
             buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
 
-            for (const line of lines) {
+            let newlineIdx;
+            while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+                const line = buffer.slice(0, newlineIdx);
+                buffer = buffer.slice(newlineIdx + 1);
+
                 const trimmed = line.trim();
                 if (!trimmed || !trimmed.startsWith('data:')) continue;
 
                 const data = trimmed.slice(5).trim();
 
                 if (data === '[DONE]') {
-                    finished = true;
+                    receivedDone = true;
                     break;
                 }
 
                 try {
                     const parsed = JSON.parse(data);
-                    const content = parsed.choices?.[0]?.delta?.content;
+                    const choice = parsed.choices?.[0];
+                    const content = choice?.delta?.content;
                     if (content) {
                         fullResponse += content;
                         updateStreamingMessage(fullResponse);
                     }
-                    const finishReason = parsed.choices?.[0]?.finish_reason;
-                    if (finishReason && finishReason !== 'null') {
-                        finished = true;
-                    }
                 } catch (e) {
-                    if (data.trim() && !data.includes('ping')) {
-                        console.debug('Chunk parse skip:', data.slice(0, 60));
+                    if (data && !data.includes('ping')) {
+                        console.debug('Chunk parse skip:', data.slice(0, 80));
                     }
                 }
             }
-            if (finished) break;
         }
+    } catch (streamErr) {
+        console.error('Stream read error:', streamErr);
     } finally {
-        buffer += decoder.decode();
-        decoder.decode = () => '';
+        try {
+            const rest = decoder.decode();
+            if (rest) buffer += rest;
+        } catch (e) {}
+
+        const bufTrim = buffer.trim();
+        if (bufTrim.startsWith('data:')) {
+            const data = bufTrim.slice(5).trim();
+            if (data && data !== '[DONE]') {
+                try {
+                    const parsed = JSON.parse(data);
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    if (content) {
+                        fullResponse += content;
+                    }
+                } catch (e) {}
+            }
+        }
 
         if (fullResponse) {
             finalizeStreamingMessage(fullResponse);
@@ -1867,7 +1908,7 @@ async function callProactiveGroupAPI(apiKey, character, group) {
         stream: false,
         temperature: 0.9,
         seed: randomSeed,
-        max_tokens: 1536
+        max_tokens: 4096
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
