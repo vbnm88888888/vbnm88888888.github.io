@@ -1086,14 +1086,19 @@ async function triggerProactiveChat() {
     isStreaming = true;
     document.getElementById('proactiveChatBtn').disabled = true;
 
-    if (activeContextType === 'group') {
-        await triggerProactiveGroupChat(apiKey);
-    } else {
-        await triggerProactiveCharacterChat(apiKey);
+    try {
+        if (activeContextType === 'group') {
+            await triggerProactiveGroupChat(apiKey);
+        } else {
+            await triggerProactiveCharacterChat(apiKey);
+        }
+    } catch (error) {
+        console.error('Proactive chat error:', error);
+        showToast(error.message || '主动对话失败');
+    } finally {
+        isStreaming = false;
+        document.getElementById('proactiveChatBtn').disabled = false;
     }
-
-    isStreaming = false;
-    document.getElementById('proactiveChatBtn').disabled = false;
 }
 
 async function triggerProactiveCharacterChat(apiKey) {
@@ -1310,6 +1315,7 @@ function addGroupErrorMessage(content, characterId) {
 let _streamingContent = '';
 let _streamingRafId = null;
 let _streamingTextEl = null;
+let _streamingFinalized = false;
 
 function resetStreamingCache() {
     if (_streamingRafId !== null) {
@@ -1318,6 +1324,7 @@ function resetStreamingCache() {
     }
     _streamingTextEl = null;
     _streamingContent = '';
+    _streamingFinalized = false;
 }
 
 function _getOrCreateStreamingElement() {
@@ -1345,11 +1352,14 @@ function _getOrCreateStreamingElement() {
 }
 
 function updateStreamingMessage(content) {
+    // finalize 之后任何更新都忽略，避免纯文本覆盖 Markdown
+    if (_streamingFinalized) return;
     _streamingContent = content;
     // 一帧内只渲染一次，避免高频chunk导致DOM过载
     if (_streamingRafId !== null) return;
     _streamingRafId = requestAnimationFrame(() => {
         _streamingRafId = null;
+        if (_streamingFinalized) return;
         const el = _getOrCreateStreamingElement();
         el.innerHTML = renderStreamingText(_streamingContent);
         scrollToBottom();
@@ -1467,6 +1477,8 @@ function renderStreamingText(content) {
 
 // 流式传输完成后，对最后一条消息进行Markdown渲染
 function finalizeStreamingMessage(content) {
+    // 标记为已结束：后续 RAF 回调与 updateStreamingMessage 都不生效
+    _streamingFinalized = true;
     // 取消待执行的轻量渲染
     if (_streamingRafId !== null) {
         cancelAnimationFrame(_streamingRafId);
@@ -1501,7 +1513,7 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
         messages: requestMessages,
         stream: true,
         temperature: 0.7,
-        max_tokens: 1024
+        max_tokens: 1536
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1529,52 +1541,71 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
     }
 
     const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
+    // {stream: true} 让 decoder 保留跨 chunk 的 UTF-8 部分序列，防止多字节字符被截断导致 JSON.parse 失败
+    const decoder = new TextDecoder('utf-8', { stream: true });
+    let buffer = '';
     let fullResponse = '';
+    let finished = false;
 
-    while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n').filter(line => line.trim());
+            if (done) break;
 
-        for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            // 保留最后一行（可能是不完整的 data line）
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed) continue;
+                if (!trimmed.startsWith('data:')) continue;
+
+                const data = trimmed.slice(5).trim();
+
                 if (data === '[DONE]') {
-                    if (fullResponse) {
-                        finalizeStreamingMessage(fullResponse);
-                        character.messages.push({ role: 'assistant', content: fullResponse });
-                        saveCharacters();
-                    }
-                    return;
+                    finished = true;
+                    break;
                 }
 
                 try {
                     const parsed = JSON.parse(data);
                     const content = parsed.choices?.[0]?.delta?.content;
-
                     if (content) {
                         fullResponse += content;
                         updateStreamingMessage(fullResponse);
                     }
+                    const finishReason = parsed.choices?.[0]?.finish_reason;
+                    if (finishReason && finishReason !== 'null') {
+                        finished = true;
+                    }
                 } catch (e) {
-                    console.warn('Failed to parse chunk:', e);
+                    // SSE 中的 ping / 心跳行是无法 parse 的正常情况，只 debug
+                    if (data.trim() && !data.includes('ping')) {
+                        console.debug('Chunk parse skip:', data.slice(0, 60));
+                    }
                 }
             }
+            if (finished) break;
         }
-    }
+    } finally {
+        // flush remaining
+        buffer += decoder.decode();
+        decoder.decode = () => '';
 
-    // 流式传输未收到 [DONE] 信号结束时的兜底处理
-    if (fullResponse) {
-        finalizeStreamingMessage(fullResponse);
-        const lastMsg = character.messages[character.messages.length - 1];
-        if (!lastMsg || lastMsg.content !== fullResponse) {
-            character.messages.push({ role: 'assistant', content: fullResponse });
-            saveCharacters();
+        if (fullResponse && !finished) {
+            // 未收到 [DONE] 就中断：也渲染为完整消息
+            console.debug('Stream closed without [DONE], finalizing partial reply');
+        }
+        if (fullResponse) {
+            finalizeStreamingMessage(fullResponse);
+            const lastMsg = character.messages[character.messages.length - 1];
+            if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.content !== fullResponse) {
+                character.messages.push({ role: 'assistant', content: fullResponse });
+                saveCharacters();
+            }
         }
     }
 }
@@ -1642,7 +1673,7 @@ ${positionHint}` },
         stream: false,
         temperature: 0.9,
         seed: randomSeed,
-        max_tokens: 1024
+        max_tokens: 1536
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1698,7 +1729,7 @@ async function callProactiveAPI(apiKey, character) {
         messages: requestMessages,
         stream: true,
         temperature: 0.8,
-        max_tokens: 1024
+        max_tokens: 1536
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1726,52 +1757,62 @@ async function callProactiveAPI(apiKey, character) {
     }
 
     const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
+    const decoder = new TextDecoder('utf-8', { stream: true });
+    let buffer = '';
     let fullResponse = '';
+    let finished = false;
 
-    while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n').filter(line => line.trim());
+            if (done) break;
 
-        for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith('data:')) continue;
+
+                const data = trimmed.slice(5).trim();
+
                 if (data === '[DONE]') {
-                    if (fullResponse) {
-                        finalizeStreamingMessage(fullResponse);
-                        character.messages.push({ role: 'assistant', content: fullResponse });
-                        saveCharacters();
-                    }
-                    return;
+                    finished = true;
+                    break;
                 }
 
                 try {
                     const parsed = JSON.parse(data);
                     const content = parsed.choices?.[0]?.delta?.content;
-
                     if (content) {
                         fullResponse += content;
                         updateStreamingMessage(fullResponse);
                     }
+                    const finishReason = parsed.choices?.[0]?.finish_reason;
+                    if (finishReason && finishReason !== 'null') {
+                        finished = true;
+                    }
                 } catch (e) {
-                    console.warn('Failed to parse chunk:', e);
+                    if (data.trim() && !data.includes('ping')) {
+                        console.debug('Chunk parse skip:', data.slice(0, 60));
+                    }
                 }
             }
+            if (finished) break;
         }
-    }
+    } finally {
+        buffer += decoder.decode();
+        decoder.decode = () => '';
 
-    // 流式传输未收到 [DONE] 信号结束时的兜底处理
-    if (fullResponse) {
-        finalizeStreamingMessage(fullResponse);
-        const lastMsg = character.messages[character.messages.length - 1];
-        if (!lastMsg || lastMsg.content !== fullResponse) {
-            character.messages.push({ role: 'assistant', content: fullResponse });
-            saveCharacters();
+        if (fullResponse) {
+            finalizeStreamingMessage(fullResponse);
+            const lastMsg = character.messages[character.messages.length - 1];
+            if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.content !== fullResponse) {
+                character.messages.push({ role: 'assistant', content: fullResponse });
+                saveCharacters();
+            }
         }
     }
 }
@@ -1826,7 +1867,7 @@ async function callProactiveGroupAPI(apiKey, character, group) {
         stream: false,
         temperature: 0.9,
         seed: randomSeed,
-        max_tokens: 1024
+        max_tokens: 1536
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
