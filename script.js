@@ -1297,33 +1297,55 @@ function addGroupErrorMessage(content, characterId) {
     scrollToBottom();
 }
 
-function updateStreamingMessage(content) {
-    const chatMessages = document.getElementById('chatMessages');
-    const lastMessage = chatMessages.querySelector('.message.bot:last-child');
-    const char = getActiveCharacter();
+// ========== 流式渲染性能优化 ==========
+// 缓存DOM元素引用，避免每个chunk都querySelector；用requestAnimationFrame合并一帧内的多次更新
+let _streamingContent = '';
+let _streamingRafId = null;
+let _streamingTextEl = null;
 
-    if (lastMessage) {
-        const textElement = lastMessage.querySelector('.message-text');
-        if (textElement) {
-            textElement.innerHTML = renderStreamingText(content);
-        }
-    } else {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = 'message bot';
-        messageDiv.innerHTML = `
-            <div class="avatar bot-avatar">
-                ${char?.avatar?.startsWith('data:') ? `<img src="${char.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${char?.avatar || '🌿'}</span>`}
-            </div>
-            <div class="message-content">
-                <div class="message-bubble">
-                    <div class="message-text">${renderStreamingText(content)}</div>
-                </div>
-                <div class="message-info">${getAvatarDisplay(char?.avatar || '🌿')} ${char?.name || 'AI'}</div>
-            </div>
-        `;
-        chatMessages.appendChild(messageDiv);
+function resetStreamingCache() {
+    if (_streamingRafId !== null) {
+        cancelAnimationFrame(_streamingRafId);
+        _streamingRafId = null;
     }
-    scrollToBottom();
+    _streamingTextEl = null;
+    _streamingContent = '';
+}
+
+function _getOrCreateStreamingElement() {
+    if (_streamingTextEl && document.contains(_streamingTextEl)) {
+        return _streamingTextEl;
+    }
+    const char = getActiveCharacter();
+    const chatMessages = document.getElementById('chatMessages');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message bot';
+    messageDiv.innerHTML = `
+        <div class="avatar bot-avatar">
+            ${char?.avatar?.startsWith('data:') ? `<img src="${char.avatar}" alt="avatar">` : `<span style="font-size: 1.2rem;">${char?.avatar || '🌿'}</span>`}
+        </div>
+        <div class="message-content">
+            <div class="message-bubble">
+                <div class="message-text"></div>
+            </div>
+            <div class="message-info">${getAvatarDisplay(char?.avatar || '🌿')} ${char?.name || 'AI'}</div>
+        </div>
+    `;
+    chatMessages.appendChild(messageDiv);
+    _streamingTextEl = messageDiv.querySelector('.message-text');
+    return _streamingTextEl;
+}
+
+function updateStreamingMessage(content) {
+    _streamingContent = content;
+    // 一帧内只渲染一次，避免高频chunk导致DOM过载
+    if (_streamingRafId !== null) return;
+    _streamingRafId = requestAnimationFrame(() => {
+        _streamingRafId = null;
+        const el = _getOrCreateStreamingElement();
+        el.innerHTML = renderStreamingText(_streamingContent);
+        scrollToBottom();
+    });
 }
 
 function updateGroupStreamingMessage(content, characterId) {
@@ -1437,28 +1459,29 @@ function renderStreamingText(content) {
 
 // 流式传输完成后，对最后一条消息进行Markdown渲染
 function finalizeStreamingMessage(content) {
-    const chatMessages = document.getElementById('chatMessages');
-    const lastMessage = chatMessages.querySelector('.message.bot:last-child');
-    if (lastMessage) {
-        const textElement = lastMessage.querySelector('.message-text');
-        if (textElement) {
-            textElement.className = 'message-text markdown-body';
-            textElement.innerHTML = renderMarkdown(content);
-        }
-    } else {
-        addBotMessage(content);
+    // 取消待执行的轻量渲染
+    if (_streamingRafId !== null) {
+        cancelAnimationFrame(_streamingRafId);
+        _streamingRafId = null;
     }
+    const el = _getOrCreateStreamingElement();
+    el.className = 'message-text markdown-body';
+    el.innerHTML = renderMarkdown(content);
     scrollToBottom();
+    // 重置缓存，供下次流式使用
+    _streamingTextEl = null;
+    _streamingContent = '';
 }
 
 async function callDeepSeekAPI(userMessage, apiKey, character) {
+    resetStreamingCache();
     const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
     const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
 
-    // 只保留最近20条消息，避免上下文过长导致响应变慢
-    const recentMessages = character.messages.slice(-20);
+    // 只保留最近12条消息，避免上下文过长导致响应变慢
+    const recentMessages = character.messages.slice(-12);
 
     const requestMessages = [
         { role: 'system', content: character.systemPrompt },
@@ -1470,7 +1493,7 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
         messages: requestMessages,
         stream: true,
         temperature: 0.7,
-        max_tokens: 2048
+        max_tokens: 1024
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1611,7 +1634,7 @@ ${positionHint}` },
         stream: false,
         temperature: 0.9,
         seed: randomSeed,
-        max_tokens: 2048
+        max_tokens: 1024
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1647,6 +1670,7 @@ ${positionHint}` },
 }
 
 async function callProactiveAPI(apiKey, character) {
+    resetStreamingCache();
     const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
     const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
@@ -1666,7 +1690,7 @@ async function callProactiveAPI(apiKey, character) {
         messages: requestMessages,
         stream: true,
         temperature: 0.8,
-        max_tokens: 2048
+        max_tokens: 1024
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1794,7 +1818,7 @@ async function callProactiveGroupAPI(apiKey, character, group) {
         stream: false,
         temperature: 0.9,
         seed: randomSeed,
-        max_tokens: 2048
+        max_tokens: 1024
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;

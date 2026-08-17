@@ -1,4 +1,4 @@
-﻿* {
+* {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
@@ -277,10 +277,11 @@ body {
 }
 
 .message.user .message-bubble {
-    background: linear-gradient(135deg, #f472b6, #fb7185);
+    background: linear-gradient(135deg, rgba(244, 114, 182, 0.5), rgba(251, 113, 133, 0.5));
     border-bottom-right-radius: 6px;
     color: white;
-    box-shadow: 0 4px 15px rgba(244, 114, 182, 0.3);
+    box-shadow: 0 4px 15px rgba(244, 114, 182, 0.2);
+    backdrop-filter: blur(2px);
 }
 
 .message.user .message-bubble::before {
@@ -292,13 +293,14 @@ body {
     height: 0;
     border-top: 8px solid transparent;
     border-bottom: 8px solid transparent;
-    border-left: 10px solid #fb7185;
+    border-left: 10px solid rgba(251, 113, 133, 0.5);
 }
 
 .message.bot .message-bubble {
-    background-color: var(--card-bg);
+    background-color: rgba(255, 255, 255, 0.5);
     border-bottom-left-radius: 6px;
     border: 2px solid var(--border-color);
+    backdrop-filter: blur(2px);
     box-shadow: var(--shadow);
 }
 
