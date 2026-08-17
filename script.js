@@ -7,6 +7,7 @@ const STORAGE_KEY_CHARACTERS = 'deepseek_characters';
 const STORAGE_KEY_GROUPS = 'deepseek_groups';
 const STORAGE_KEY_ACTIVE_CONTEXT = 'deepseek_active_context';
 const STORAGE_KEY_CONTEXT_TYPE = 'deepseek_context_type';
+const STORAGE_KEY_CHAT_BACKGROUND = 'deepseek_chat_background';
 
 let characters = [];
 let groups = [];
@@ -47,6 +48,7 @@ const defaultCharacters = [
 document.addEventListener('DOMContentLoaded', () => {
     initSettings();
     initData();
+    initBackground();
     initEventListeners();
     autoResizeTextarea();
 });
@@ -330,6 +332,9 @@ function initEventListeners() {
     });
     document.getElementById('avatarFileInput').addEventListener('change', handleAvatarUpload);
 
+    document.getElementById('backgroundBtn').addEventListener('click', handleBackgroundButtonClick);
+    document.getElementById('backgroundFileInput').addEventListener('change', handleBackgroundUpload);
+
     document.getElementById('settingsModal').addEventListener('click', (e) => {
         if (e.target.classList.contains('modal-overlay')) {
             closeSettings();
@@ -555,14 +560,117 @@ function handleAvatarUpload(e) {
     reader.onload = (event) => {
         const dataUrl = event.target.result;
         currentAvatarDataUrl = dataUrl;
-        
+
         const avatarPreview = document.getElementById('avatarPreview');
         avatarPreview.innerHTML = `<img src="${dataUrl}" alt="avatar">`;
         avatarPreview.classList.add('has-image');
-        
+
         document.getElementById('newCharacterAvatar').value = '';
     };
     reader.readAsDataURL(file);
+}
+
+// ========== 聊天背景功能 ==========
+function initBackground() {
+    const savedBg = localStorage.getItem(STORAGE_KEY_CHAT_BACKGROUND);
+    if (savedBg) {
+        applyBackground(savedBg);
+    }
+}
+
+function handleBackgroundButtonClick() {
+    const hasBg = localStorage.getItem(STORAGE_KEY_CHAT_BACKGROUND);
+    if (hasBg) {
+        if (confirm('已设置聊天背景图片。\n点击"确定"清除背景，点击"取消"选择新的背景图片。')) {
+            clearBackground();
+        } else {
+            document.getElementById('backgroundFileInput').click();
+        }
+    } else {
+        document.getElementById('backgroundFileInput').click();
+    }
+}
+
+function handleBackgroundUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+        showToast('请选择图片文件');
+        e.target.value = '';
+        return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+        showToast('图片大小不能超过8MB');
+        e.target.value = '';
+        return;
+    }
+
+    // 通过 canvas 压缩图片，避免 localStorage 空间不足
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+            const maxWidth = 1920;
+            let width = img.width;
+            let height = img.height;
+
+            if (width > maxWidth) {
+                height = Math.round((maxWidth / width) * height);
+                width = maxWidth;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+            try {
+                localStorage.setItem(STORAGE_KEY_CHAT_BACKGROUND, dataUrl);
+                applyBackground(dataUrl);
+                showToast('背景设置成功！', 'success');
+            } catch (err) {
+                console.error('Failed to save background:', err);
+                showToast('存储空间不足，无法保存背景图片，请先清除旧背景或减少角色数据');
+            }
+        };
+        img.onerror = () => {
+            showToast('图片加载失败，请尝试其他图片');
+        };
+        img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+
+    // 重置 input，允许再次选择同一文件
+    e.target.value = '';
+}
+
+function applyBackground(dataUrl) {
+    const chatContainer = document.querySelector('.chat-container');
+    if (!chatContainer) return;
+
+    if (dataUrl) {
+        // 叠加半透明白色遮罩，保证文字可读性
+        chatContainer.style.backgroundImage = `linear-gradient(rgba(255,250,255,0.6), rgba(255,250,255,0.6)), url("${dataUrl}")`;
+        chatContainer.style.backgroundSize = 'cover';
+        chatContainer.style.backgroundPosition = 'center';
+        chatContainer.style.backgroundRepeat = 'no-repeat';
+    } else {
+        chatContainer.style.backgroundImage = '';
+        chatContainer.style.backgroundSize = '';
+        chatContainer.style.backgroundPosition = '';
+        chatContainer.style.backgroundRepeat = '';
+    }
+}
+
+function clearBackground() {
+    localStorage.removeItem(STORAGE_KEY_CHAT_BACKGROUND);
+    applyBackground(null);
+    showToast('背景已清除', 'success');
 }
 
 function handleSaveCharacter() {
@@ -1198,7 +1306,7 @@ function updateStreamingMessage(content) {
     if (lastMessage) {
         const textElement = lastMessage.querySelector('.message-text');
         if (textElement) {
-            textElement.innerHTML = renderMarkdown(content);
+            textElement.innerHTML = renderStreamingText(content);
         }
     } else {
         const messageDiv = document.createElement('div');
@@ -1209,7 +1317,7 @@ function updateStreamingMessage(content) {
             </div>
             <div class="message-content">
                 <div class="message-bubble">
-                    <div class="message-text markdown-body">${renderMarkdown(content)}</div>
+                    <div class="message-text">${renderStreamingText(content)}</div>
                 </div>
                 <div class="message-info">${getAvatarDisplay(char?.avatar || '🌿')} ${char?.name || 'AI'}</div>
             </div>
@@ -1222,13 +1330,13 @@ function updateStreamingMessage(content) {
 function updateGroupStreamingMessage(content, characterId) {
     const chatMessages = document.getElementById('chatMessages');
     const character = characters.find(c => c.id === characterId);
-    
+
     const lastMessage = chatMessages.querySelector('.message.bot:last-child');
-    
+
     if (lastMessage && lastMessage.getAttribute('data-character-id') === characterId) {
         const textElement = lastMessage.querySelector('.message-text');
         if (textElement) {
-            textElement.innerHTML = renderMarkdown(content);
+            textElement.innerHTML = renderStreamingText(content);
         }
         scrollToBottom();
         return;
@@ -1243,7 +1351,7 @@ function updateGroupStreamingMessage(content, characterId) {
         </div>
         <div class="message-content">
             <div class="message-bubble">
-                <div class="message-text markdown-body">${renderMarkdown(content)}</div>
+                <div class="message-text">${renderStreamingText(content)}</div>
             </div>
             <div class="message-info">${getAvatarDisplay(character?.avatar || '👤')} ${character?.name || 'AI'}</div>
         </div>
@@ -1321,6 +1429,29 @@ function renderMarkdown(text) {
     return div.innerHTML.replace(/\n/g, '<br>');
 }
 
+// 轻量级纯文本渲染：仅转义HTML并转换换行，用于流式传输过程中
+function renderStreamingText(content) {
+    const div = document.createElement('div');
+    div.textContent = content;
+    return div.innerHTML.replace(/\n/g, '<br>');
+}
+
+// 流式传输完成后，对最后一条消息进行Markdown渲染
+function finalizeStreamingMessage(content) {
+    const chatMessages = document.getElementById('chatMessages');
+    const lastMessage = chatMessages.querySelector('.message.bot:last-child');
+    if (lastMessage) {
+        const textElement = lastMessage.querySelector('.message-text');
+        if (textElement) {
+            textElement.className = 'message-text markdown-body';
+            textElement.innerHTML = renderMarkdown(content);
+        }
+    } else {
+        addBotMessage(content);
+    }
+    scrollToBottom();
+}
+
 async function callDeepSeekAPI(userMessage, apiKey, character) {
     const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
     const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
@@ -1385,7 +1516,7 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
                 
                 if (data === '[DONE]') {
                     if (fullResponse) {
-                        updateStreamingMessage(fullResponse);
+                        finalizeStreamingMessage(fullResponse);
                         character.messages.push({ role: 'assistant', content: fullResponse });
                         saveCharacters();
                     }
@@ -1395,7 +1526,7 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
                 try {
                     const parsed = JSON.parse(data);
                     const content = parsed.choices?.[0]?.delta?.content;
-                    
+
                     if (content) {
                         fullResponse += content;
                         updateStreamingMessage(fullResponse);
@@ -1407,12 +1538,11 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
         }
     }
 
+    // 流式传输未收到 [DONE] 信号结束时的兜底处理
     if (fullResponse) {
-        const chatMessages = document.getElementById('chatMessages');
-        const existingMessage = chatMessages.querySelector('.message.bot:last-child');
-        if (!existingMessage || !existingMessage.querySelector('.message-text').textContent) {
-            addBotMessage(fullResponse);
-        } else {
+        finalizeStreamingMessage(fullResponse);
+        const lastMsg = character.messages[character.messages.length - 1];
+        if (!lastMsg || lastMsg.content !== fullResponse) {
             character.messages.push({ role: 'assistant', content: fullResponse });
             saveCharacters();
         }
@@ -1582,14 +1712,9 @@ async function callProactiveAPI(apiKey, character) {
                 
                 if (data === '[DONE]') {
                     if (fullResponse) {
-                        const chatMessages = document.getElementById('chatMessages');
-                        const existingMessage = chatMessages.querySelector('.message.bot:last-child');
-                        if (!existingMessage || !existingMessage.querySelector('.message-text').textContent) {
-                            addBotMessage(fullResponse);
-                        } else {
-                            character.messages.push({ role: 'assistant', content: fullResponse });
-                            saveCharacters();
-                        }
+                        finalizeStreamingMessage(fullResponse);
+                        character.messages.push({ role: 'assistant', content: fullResponse });
+                        saveCharacters();
                     }
                     return;
                 }
@@ -1597,7 +1722,7 @@ async function callProactiveAPI(apiKey, character) {
                 try {
                     const parsed = JSON.parse(data);
                     const content = parsed.choices?.[0]?.delta?.content;
-                    
+
                     if (content) {
                         fullResponse += content;
                         updateStreamingMessage(fullResponse);
@@ -1609,9 +1734,14 @@ async function callProactiveAPI(apiKey, character) {
         }
     }
 
+    // 流式传输未收到 [DONE] 信号结束时的兜底处理
     if (fullResponse) {
-        character.messages.push({ role: 'assistant', content: fullResponse });
-        saveCharacters();
+        finalizeStreamingMessage(fullResponse);
+        const lastMsg = character.messages[character.messages.length - 1];
+        if (!lastMsg || lastMsg.content !== fullResponse) {
+            character.messages.push({ role: 'assistant', content: fullResponse });
+            saveCharacters();
+        }
     }
 }
 
