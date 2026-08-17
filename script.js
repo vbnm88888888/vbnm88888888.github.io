@@ -406,6 +406,11 @@ function handleModelChange() {
 }
 
 function handleContextChange(e) {
+    if (isStreaming) {
+        showToast('正在回复中，请稍候再切换角色');
+        e.target.value = activeContextType === 'group' ? `group_${activeContextId}` : `char_${activeContextId}`;
+        return;
+    }
     const value = e.target.value;
     if (value.startsWith('group_')) {
         activeContextType = 'group';
@@ -650,19 +655,22 @@ function handleBackgroundUpload(e) {
 }
 
 function applyBackground(dataUrl) {
-    const chatContainer = document.querySelector('.chat-container');
-    if (!chatContainer) return;
+    const body = document.body;
 
     if (dataUrl) {
-        chatContainer.style.backgroundImage = `url("${dataUrl}")`;
-        chatContainer.style.backgroundSize = 'cover';
-        chatContainer.style.backgroundPosition = 'center';
-        chatContainer.style.backgroundRepeat = 'no-repeat';
+        body.style.backgroundImage = `url("${dataUrl}")`;
+        body.style.backgroundSize = 'cover';
+        body.style.backgroundPosition = 'center';
+        body.style.backgroundRepeat = 'no-repeat';
+        body.style.backgroundAttachment = 'fixed';
+        body.classList.add('has-custom-bg');
     } else {
-        chatContainer.style.backgroundImage = '';
-        chatContainer.style.backgroundSize = '';
-        chatContainer.style.backgroundPosition = '';
-        chatContainer.style.backgroundRepeat = '';
+        body.style.backgroundImage = '';
+        body.style.backgroundSize = '';
+        body.style.backgroundPosition = '';
+        body.style.backgroundRepeat = '';
+        body.style.backgroundAttachment = '';
+        body.classList.remove('has-custom-bg');
     }
 }
 

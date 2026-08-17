@@ -36,11 +36,16 @@
 body {
     font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
     background: linear-gradient(135deg, #fff5fa 0%, #fce7f3 35%, #fef3c7 100%);
+    background-attachment: fixed;
     color: var(--text-primary);
     line-height: 1.6;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
+}
+
+body.has-custom-bg {
+    background: transparent;
 }
 
 .app-container {
@@ -478,7 +483,8 @@ body {
     display: flex;
     gap: 6px;
     padding: 16px 20px;
-    background-color: var(--card-bg);
+    background-color: rgba(255, 255, 255, 0.5);
+    backdrop-filter: blur(2px);
     border-radius: var(--radius-md);
     border-bottom-left-radius: 6px;
     border: 2px solid var(--border-color);
@@ -507,11 +513,11 @@ body {
 }
 
 .input-container {
-    background-color: var(--card-bg);
+    background-color: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(4px);
     padding: 8px 10px;
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
-    box-shadow: 0 -2px 10px rgba(16, 185, 129, 0.1);
 }
 
 .model-selector {
@@ -544,7 +550,8 @@ body {
     display: flex;
     gap: 8px;
     align-items: flex-end;
-    background: linear-gradient(135deg, #fff5fa, #fce7f3);
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(4px);
     border: 1px solid var(--input-border);
     border-radius: var(--radius-lg);
     padding: 6px;
