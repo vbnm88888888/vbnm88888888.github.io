@@ -1327,10 +1327,12 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
 
+    // 只保留最近20条消息，避免上下文过长导致响应变慢
+    const recentMessages = character.messages.slice(-20);
+
     const requestMessages = [
         { role: 'system', content: character.systemPrompt },
-        ...character.messages,
-        { role: 'user', content: userMessage }
+        ...recentMessages
     ];
 
     const payload = {
@@ -1338,7 +1340,7 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
         messages: requestMessages,
         stream: true,
         temperature: 0.7,
-        max_tokens: 4096
+        max_tokens: 2048
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1480,7 +1482,7 @@ ${positionHint}` },
         stream: false,
         temperature: 0.9,
         seed: randomSeed,
-        max_tokens: 4096
+        max_tokens: 2048
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1535,7 +1537,7 @@ async function callProactiveAPI(apiKey, character) {
         messages: requestMessages,
         stream: true,
         temperature: 0.8,
-        max_tokens: 4096
+        max_tokens: 2048
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
@@ -1663,7 +1665,7 @@ async function callProactiveGroupAPI(apiKey, character, group) {
         stream: false,
         temperature: 0.9,
         seed: randomSeed,
-        max_tokens: 4096
+        max_tokens: 2048
     };
 
     let fetchUrl = `${apiUrl}/chat/completions`;
