@@ -654,8 +654,7 @@ function applyBackground(dataUrl) {
     if (!chatContainer) return;
 
     if (dataUrl) {
-        // 叠加半透明白色遮罩，保证文字可读性
-        chatContainer.style.backgroundImage = `linear-gradient(rgba(255,250,255,0.6), rgba(255,250,255,0.6)), url("${dataUrl}")`;
+        chatContainer.style.backgroundImage = `url("${dataUrl}")`;
         chatContainer.style.backgroundSize = 'cover';
         chatContainer.style.backgroundPosition = 'center';
         chatContainer.style.backgroundRepeat = 'no-repeat';
