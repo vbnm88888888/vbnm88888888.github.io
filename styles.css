@@ -282,11 +282,11 @@ body.has-custom-bg {
 }
 
 .message.user .message-bubble {
-    background: linear-gradient(135deg, rgba(244, 114, 182, 0.5), rgba(251, 113, 133, 0.5));
+    background: linear-gradient(135deg, rgba(244, 114, 182, 0.85), rgba(251, 113, 133, 0.85));
     border-bottom-right-radius: 6px;
     color: white;
     box-shadow: 0 4px 15px rgba(244, 114, 182, 0.2);
-    backdrop-filter: blur(2px);
+    backdrop-filter: blur(6px);
 }
 
 .message.user .message-bubble::before {
@@ -298,14 +298,14 @@ body.has-custom-bg {
     height: 0;
     border-top: 8px solid transparent;
     border-bottom: 8px solid transparent;
-    border-left: 10px solid rgba(251, 113, 133, 0.5);
+    border-left: 10px solid rgba(251, 113, 133, 0.85);
 }
 
 .message.bot .message-bubble {
-    background-color: rgba(255, 255, 255, 0.5);
+    background-color: rgba(255, 255, 255, 0.85);
     border-bottom-left-radius: 6px;
     border: 2px solid var(--border-color);
-    backdrop-filter: blur(2px);
+    backdrop-filter: blur(6px);
     box-shadow: var(--shadow);
 }
 
@@ -318,7 +318,7 @@ body.has-custom-bg {
     height: 0;
     border-top: 8px solid transparent;
     border-bottom: 8px solid transparent;
-    border-right: 10px solid var(--border-color);
+    border-right: 10px solid rgba(255, 255, 255, 0.85);
 }
 
 .message-text {
@@ -483,8 +483,8 @@ body.has-custom-bg {
     display: flex;
     gap: 6px;
     padding: 16px 20px;
-    background-color: rgba(255, 255, 255, 0.5);
-    backdrop-filter: blur(2px);
+    background-color: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(6px);
     border-radius: var(--radius-md);
     border-bottom-left-radius: 6px;
     border: 2px solid var(--border-color);
@@ -513,8 +513,8 @@ body.has-custom-bg {
 }
 
 .input-container {
-    background-color: rgba(255, 255, 255, 0.4);
-    backdrop-filter: blur(4px);
+    background-color: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(6px);
     padding: 8px 10px;
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
@@ -550,8 +550,8 @@ body.has-custom-bg {
     display: flex;
     gap: 8px;
     align-items: flex-end;
-    background: rgba(255, 255, 255, 0.4);
-    backdrop-filter: blur(4px);
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(6px);
     border: 1px solid var(--input-border);
     border-radius: var(--radius-lg);
     padding: 6px;

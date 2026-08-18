@@ -1458,19 +1458,71 @@ function escapeHtml(text) {
 
 function renderMarkdown(text) {
     try {
-        if (typeof marked !== 'undefined') {
-            marked.setOptions({
-                breaks: true,
-                gfm: true
-            });
+        if (typeof marked !== 'undefined' && marked.parse) {
+            try {
+                // marked v12+ API
+                marked.use({ gfm: true, breaks: true });
+            } catch (_) {
+                // v11 及更早版本
+                marked.setOptions({ gfm: true, breaks: true });
+            }
             return marked.parse(text);
         }
     } catch (e) {
-        console.warn('Markdown 解析失败:', e);
+        console.warn('marked 解析失败，使用内置解析:', e);
     }
+    // 内置轻量 Markdown 解析：处理常见语法
+    return simpleMarkdownParse(text);
+}
+
+function simpleMarkdownParse(text) {
+    let html = text;
+    // 先转义 HTML
     const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML.replace(/\n/g, '<br>');
+    div.textContent = html;
+    html = div.innerHTML;
+
+    // 代码块 ``` ... ```
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+        return `<pre><code>${code}</code></pre>`;
+    });
+    // 行内代码 `code`
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // ***bold italic***
+    html = html.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+    // **bold**
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    // *italic*
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    // __bold__
+    html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    // _italic_
+    html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+    // ~~strikethrough~~
+    html = html.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+    // [text](url) 链接
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    // 标题 # ## ###
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+    // 有序列表 1. item
+    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+    // 无序列表 - item
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    // 列表包裹
+    if (html.includes('<li>')) {
+        html = html.replace(/(<li>.*<\/li>\n?)+/g, function(match) {
+            return '<ul>' + match + '</ul>';
+        });
+    }
+    // 引用 >
+    html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+    // 换行
+    html = html.replace(/\n/g, '<br>');
+    // 水平线
+    html = html.replace(/^---$/gm, '<hr>');
+    return html;
 }
 
 // 轻量级纯文本渲染：仅转义HTML并转换换行，用于流式传输过程中
