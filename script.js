@@ -17,6 +17,19 @@ let isStreaming = false;
 let currentEditingCharacterId = null;
 let currentAvatarDataUrl = null;
 let currentEditingGroupId = null;
+let pendingImages = [];  // [{dataUrl, size, name}]
+
+// 支持多模态（视觉理解）的模型列表
+const VISION_MODELS = [
+    'deepseek-v4-flash-vision-exp',
+    'deepseek-v4-flash-vision',
+    'deepseek-v4-vision-pro'
+];
+
+function isVisionModel(modelId) {
+    return VISION_MODELS.includes(modelId) ||
+        (modelId && (modelId.includes('vision') || modelId.includes('Vision')));
+}
 
 const defaultCharacters = [
     {
@@ -335,6 +348,12 @@ function initEventListeners() {
     document.getElementById('backgroundBtn').addEventListener('click', handleBackgroundButtonClick);
     document.getElementById('backgroundFileInput').addEventListener('change', handleBackgroundUpload);
 
+    // 图片上传按钮
+    document.getElementById('imageUploadBtn').addEventListener('click', () => {
+        document.getElementById('imageFileInput').click();
+    });
+    document.getElementById('imageFileInput').addEventListener('change', handleImageFileUpload);
+
     document.getElementById('settingsModal').addEventListener('click', (e) => {
         if (e.target.classList.contains('modal-overlay')) {
             closeSettings();
@@ -390,7 +409,7 @@ function handleInput() {
     const sendBtn = document.getElementById('sendBtn');
     const hasApiKey = localStorage.getItem(STORAGE_KEY_API_KEY);
 
-    sendBtn.disabled = !input || !hasApiKey || isStreaming;
+    sendBtn.disabled = (!input && pendingImages.length === 0) || !hasApiKey || isStreaming;
 }
 
 function handleKeydown(e) {
@@ -652,6 +671,125 @@ function handleBackgroundUpload(e) {
 
     // 重置 input，允许再次选择同一文件
     e.target.value = '';
+}
+
+// ========== 消息图片上传（多模态）==========
+function handleImageFileUpload(e) {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    // 当前模型不是视觉模型时提示用户
+    const model = document.getElementById('modelSelect').value;
+    if (!isVisionModel(model)) {
+        showToast('当前模型不支持识图，请切换到「DeepSeek V4 Flash Vision (多模态)」');
+        e.target.value = '';
+        return;
+    }
+
+    let remaining = files.length;
+    const hasError = false;
+    files.forEach(file => {
+        if (!file.type.startsWith('image/')) {
+            showToast(`${file.name} 不是图片文件`);
+            remaining--;
+            if (remaining === 0) refreshImagePreview();
+            return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+            showToast(`${file.name} 超过10MB`);
+            remaining--;
+            if (remaining === 0) refreshImagePreview();
+            return;
+        }
+        // 最多 4 张图
+        if (pendingImages.length >= 4) {
+            if (!hasError) {
+                showToast('一次最多发送4张图片');
+            }
+            remaining--;
+            if (remaining === 0) refreshImagePreview();
+            return;
+        }
+
+        compressImageForMessage(file).then(dataUrl => {
+            pendingImages.push({ dataUrl, name: file.name, size: dataUrl.length });
+            remaining--;
+            if (remaining === 0) refreshImagePreview();
+            handleInput(); // 刷新发送按钮可用状态
+        }).catch(err => {
+            console.error('图片压缩失败:', err);
+            showToast(`${file.name} 处理失败`);
+            remaining--;
+            if (remaining === 0) refreshImagePreview();
+        });
+    });
+
+    e.target.value = '';
+}
+
+function compressImageForMessage(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = ev => {
+            const img = new Image();
+            img.onload = () => {
+                // 官方建议最长边 ≤ 1280，384 tokens 上限，省流量也省token
+                const maxSide = 1280;
+                let w = img.width, h = img.height;
+                const ratio = Math.min(1, maxSide / Math.max(w, h));
+                w = Math.round(w * ratio);
+                h = Math.round(h * ratio);
+
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
+
+                // 保持原 format（PNG 需要保留透明）
+                let type = 'image/jpeg';
+                let quality = 0.85;
+                if (file.type === 'image/png') {
+                    type = 'image/png';
+                    quality = undefined;
+                } else if (file.type === 'image/webp') {
+                    type = 'image/webp';
+                    quality = 0.9;
+                }
+                try {
+                    resolve(canvas.toDataURL(type, quality));
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            img.onerror = () => reject(new Error('image load error'));
+            img.src = ev.target.result;
+        };
+        reader.onerror = () => reject(new Error('file read error'));
+        reader.readAsDataURL(file);
+    });
+}
+
+function refreshImagePreview() {
+    const container = document.getElementById('imagePreviewContainer');
+    if (!pendingImages.length) {
+        container.classList.add('hidden');
+        container.innerHTML = '';
+        return;
+    }
+    container.classList.remove('hidden');
+    container.innerHTML = pendingImages.map((img, idx) => `
+        <div class="image-preview-item" data-idx="${idx}">
+            <img src="${img.dataUrl}" alt="${escapeHtml(img.name)}">
+            <button class="image-preview-remove" onclick="removePendingImage(${idx})" title="移除">×</button>
+        </div>
+    `).join('');
+}
+
+function removePendingImage(idx) {
+    pendingImages.splice(idx, 1);
+    refreshImagePreview();
+    handleInput();
 }
 
 function applyBackground(dataUrl) {
@@ -994,7 +1132,7 @@ async function sendMessage() {
     const input = document.getElementById('userInput');
     const message = input.value.trim();
 
-    if (!message || isStreaming) return;
+    if ((!message && pendingImages.length === 0) || isStreaming) return;
 
     const apiKey = localStorage.getItem(STORAGE_KEY_API_KEY);
     if (!apiKey) {
@@ -1003,6 +1141,16 @@ async function sendMessage() {
         return;
     }
 
+    // 如果有图片但模型不支持视觉，提示用户并禁止发送
+    const curModel = document.getElementById('modelSelect').value;
+    if (pendingImages.length > 0 && !isVisionModel(curModel)) {
+        showToast('当前模型不支持识图，请先切换到 DeepSeek V4 Flash Vision (多模态)');
+        return;
+    }
+
+    // 取出待发送图片（直接引用 pendingImages，发送完再清空，保证顺序）
+    const sendingImages = pendingImages.map(i => i.dataUrl);
+
     input.value = '';
     input.style.height = 'auto';
     document.getElementById('sendBtn').disabled = true;
@@ -1010,25 +1158,30 @@ async function sendMessage() {
     isStreaming = true;
 
     if (activeContextType === 'group') {
-        await sendGroupMessage(message, apiKey);
+        await sendGroupMessage(message, sendingImages, apiKey);
     } else {
-        await sendCharacterMessage(message, apiKey);
+        await sendCharacterMessage(message, sendingImages, apiKey);
     }
+
+    // 发送完成：清空待上传图片
+    pendingImages = [];
+    refreshImagePreview();
 
     isStreaming = false;
     handleInput();
 }
 
-async function sendCharacterMessage(message, apiKey) {
+async function sendCharacterMessage(message, images = [], apiKey) {
     const char = getActiveCharacter();
-    char.messages.push({ role: 'user', content: message });
+    const savedContent = buildContentMessage(message, images);
+    char.messages.push({ role: 'user', content: savedContent });
     saveCharacters();
-    addUserMessage(message);
+    addUserMessage(message, images);
 
     showTypingIndicator();
 
     try {
-        await callDeepSeekAPI(message, apiKey, char);
+        await callDeepSeekAPI(message, images, apiKey, char);
     } catch (error) {
         console.error('API Error:', error);
         showToast(error.message || 'API 请求失败');
@@ -1047,11 +1200,12 @@ function shuffleArray(array) {
     return shuffled;
 }
 
-async function sendGroupMessage(message, apiKey) {
+async function sendGroupMessage(message, images = [], apiKey) {
     const group = getActiveGroup();
-    group.messages.push({ role: 'user', content: message });
+    const savedContent = buildContentMessage(message, images);
+    group.messages.push({ role: 'user', content: savedContent });
     saveGroups();
-    addUserMessage(message);
+    addUserMessage(message, images);
 
     const shuffledMembers = shuffleArray([...group.members]);
     
@@ -1063,7 +1217,7 @@ async function sendGroupMessage(message, apiKey) {
         showTypingIndicator(member);
 
         try {
-            await callGroupDeepSeekAPI(message, apiKey, member, group, i + 1, shuffledMembers);
+            await callGroupDeepSeekAPI(message, images, apiKey, member, group, i + 1, shuffledMembers);
         } catch (error) {
             console.error('API Error:', error);
             addGroupErrorMessage(error.message || 'API 请求失败', memberId);
@@ -1140,23 +1294,74 @@ async function triggerProactiveGroupChat(apiKey) {
     }
 }
 
-function addUserMessage(content, save = true) {
+function addUserMessage(content, images = [], save = true) {
+    // 兼容旧调用：images传了boolean（原save参数）时自动回退
+    if (typeof images === 'boolean') {
+        save = images;
+        images = [];
+    }
     const chatMessages = document.getElementById('chatMessages');
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message user';
+
+    const displayText = escapeHtml(contentToText(content));
+    const displayImages = (images && images.length) ? images : contentToImages(content);
+    const imagesHtml = (displayImages && displayImages.length) ? `
+        <div class="message-user-images-row">
+            ${displayImages.map(img => `<img src="${img}" alt="用户图片" onclick="window.open('${img}','_blank')">`).join('')}
+        </div>
+    ` : '';
+
     messageDiv.innerHTML = `
         <div class="avatar user-avatar">
             <span style="font-size: 1.2rem;">🌟</span>
         </div>
         <div class="message-content">
             <div class="message-bubble">
-                <div class="message-text">${escapeHtml(content)}</div>
+                ${imagesHtml}
+                <div class="message-text">${displayText}</div>
             </div>
             <div class="message-info">你 🌟</div>
         </div>
     `;
     chatMessages.appendChild(messageDiv);
     scrollToBottom();
+}
+
+function buildContentMessage(text, images) {
+    // 给 API 调用或消息存储用：有图时返回 content 数组，否则直接返回字符串
+    const hasImages = images && images.length > 0;
+    if (!hasImages) return text || '';
+    const parts = [];
+    if (text && text.trim()) {
+        parts.push({ type: 'text', text });
+    }
+    for (const imgDataUrl of images) {
+        // base64 前缀按格式提取
+        parts.push({
+            type: 'image_url',
+            image_url: { url: imgDataUrl }
+        });
+    }
+    return parts;
+}
+
+function contentToText(content) {
+    // messages 中 content 可能是字符串也可能是多模态数组；统一取出纯文本用于显示和上下文
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+        return content.filter(p => p && p.type === 'text').map(p => p.text).join('\n');
+    }
+    return String(content || '');
+}
+
+function contentToImages(content) {
+    if (Array.isArray(content)) {
+        return content
+            .filter(p => p && p.type === 'image_url' && p.image_url && p.image_url.url)
+            .map(p => p.image_url.url);
+    }
+    return [];
 }
 
 function addBotMessage(content, save = true) {
@@ -1550,20 +1755,29 @@ function finalizeStreamingMessage(content) {
     _streamingContent = '';
 }
 
-async function callDeepSeekAPI(userMessage, apiKey, character) {
+async function callDeepSeekAPI(userMessage, userImages = [], apiKey, character) {
     resetStreamingCache();
     const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
     const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
+    const useVision = isVisionModel(model);
 
     // 只保留最近12条消息，避免上下文过长导致响应变慢
     const recentMessages = character.messages.slice(-12);
 
-    const requestMessages = [
-        { role: 'system', content: character.systemPrompt },
-        ...recentMessages
-    ];
+    // 构建请求消息：多模态模型用 content 数组（支持图），纯文本模型走纯字符串
+    const requestMessages = [];
+    requestMessages.push({ role: 'system', content: character.systemPrompt });
+    for (const msg of recentMessages) {
+        if (useVision && Array.isArray(msg.content)) {
+            // 多模态：原样传入（但仅最后一条用户消息带图片，之前的图可能太大，保留最近1轮用户图即可）
+            requestMessages.push({ role: msg.role, content: msg.content });
+        } else {
+            // 纯文本模型：统一取纯文本
+            requestMessages.push({ role: msg.role, content: contentToText(msg.content) });
+        }
+    }
 
     const payload = {
         model: model,
@@ -1624,27 +1838,29 @@ async function callDeepSeekAPI(userMessage, apiKey, character) {
     }
 }
 
-async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, position = 1, speakingOrder = []) {
+async function callGroupDeepSeekAPI(userMessage, userImages = [], apiKey, character, group, position = 1, speakingOrder = []) {
     const apiUrl = localStorage.getItem(STORAGE_KEY_API_URL) || 'https://api.deepseek.com/v1';
     const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
+    const useVision = isVisionModel(model);
 
     const recentMessages = group.messages.slice(-10);
     
     const groupMessages = [];
     for (const msg of recentMessages) {
+        const text = contentToText(msg.content);
         if (msg.role === 'assistant') {
             const speakerName = characters.find(c => c.id === msg.characterId)?.name || 'AI';
             groupMessages.push({
                 role: 'user',
-                content: `[${speakerName}的发言] ${msg.content}`
+                content: `[${speakerName}的发言] ${text}`
             });
+        } else if (useVision && Array.isArray(msg.content)) {
+            // 最近一条用户图保留
+            groupMessages.push({ role: 'user', content: msg.content });
         } else {
-            groupMessages.push({
-                role: 'user',
-                content: msg.content
-            });
+            groupMessages.push({ role: 'user', content: text });
         }
     }
 
@@ -1662,6 +1878,9 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
         positionHint = `你是第${position}个发言的成员。在你之前，${previousSpeakers}已经发过言了。请仔细阅读他们的发言内容，并在你的回复中回应他们的观点或继续讨论。`;
     }
     
+    // 最后一条：用户发送的内容（带图片时用数组形式）
+    const lastUserMsg = { role: 'user', content: buildContentMessage(userMessage, (useVision && position === 1) ? userImages : []) };
+
     const requestMessages = [
         { role: 'system', content: `你是${character.name}，${character.systemPrompt}
 
@@ -1676,7 +1895,7 @@ async function callGroupDeepSeekAPI(userMessage, apiKey, character, group, posit
 当前发言提示：
 ${positionHint}` },
         ...groupMessages,
-        { role: 'user', content: userMessage }
+        lastUserMsg
     ];
 
     const randomSeed = Date.now() + Math.floor(Math.random() * 1000000);
@@ -1728,13 +1947,17 @@ async function callProactiveAPI(apiKey, character) {
     const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
+    const useVision = isVisionModel(model);
+
+    // 主动对话不需要图片输入，但对 vision 模型可保留最近 1 轮的图片以防上下文；纯文本模型强制字符串
+    const historyMsgs = character.messages.slice(-10).map(msg => {
+        if (useVision) return { role: msg.role, content: msg.content };
+        return { role: msg.role, content: contentToText(msg.content) };
+    });
 
     const requestMessages = [
         { role: 'system', content: `${character.systemPrompt}\n\n现在，根据你的性格和之前的对话上下文，主动发起一个话题或问候用户。不要等待用户提问，直接以你的角色身份开口说话。保持对话自然流畅，就像朋友之间聊天一样。` },
-        ...character.messages.slice(-10).map(msg => ({
-            role: msg.role,
-            content: msg.content
-        })),
+        ...historyMsgs,
         { role: 'user', content: '请主动发起对话，根据你的性格和当前情境，主动跟我聊一个话题。' }
     ];
 
@@ -1802,21 +2025,25 @@ async function callProactiveGroupAPI(apiKey, character, group) {
     const useProxy = localStorage.getItem(STORAGE_KEY_USE_PROXY) === 'true';
     const proxyUrl = localStorage.getItem(STORAGE_KEY_PROXY_URL) || '';
     const model = document.getElementById('modelSelect').value;
+    const useVision = isVisionModel(model);
 
     const recentMessages = group.messages.slice(-10);
     
     const groupMessages = [];
     for (const msg of recentMessages) {
+        const text = contentToText(msg.content);
         if (msg.role === 'assistant') {
             const speakerName = characters.find(c => c.id === msg.characterId)?.name || 'AI';
             groupMessages.push({
                 role: 'user',
-                content: `[${speakerName}的发言] ${msg.content}`
+                content: `[${speakerName}的发言] ${text}`
             });
+        } else if (useVision && Array.isArray(msg.content)) {
+            groupMessages.push({ role: 'user', content: msg.content });
         } else {
             groupMessages.push({
                 role: 'user',
-                content: msg.content
+                content: text
             });
         }
     }
